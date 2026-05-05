@@ -44,11 +44,12 @@ claude-subagent start <task-name> --prompt <prompt-file> --workdir <path>
 
 ```bash
 claude-subagent status <task-name>
+claude-subagent result <task-name>
 claude-subagent logs <task-name>
 claude-subagent diff <task-name>
 ```
 
-6. Review Claude's report, logs, and diff before integrating any result.
+6. Review Claude's result, report, logs, and diff before integrating any output.
 
 ## Rules
 

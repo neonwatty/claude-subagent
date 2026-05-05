@@ -13,6 +13,7 @@ Usage:
   claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree]
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
+  claude-subagent result <task-name>
   claude-subagent diff <task-name>
   claude-subagent stop <task-name>
   claude-subagent list
@@ -29,6 +30,10 @@ fail() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+resolve_command() {
+  command -v "$1" 2>/dev/null || fail "missing required command: $1"
 }
 
 validate_task_name() {
@@ -69,6 +74,48 @@ read_file_or_empty() {
   if [[ -f "$file" ]]; then
     cat "$file"
   fi
+}
+
+extract_result() {
+  local dir="$1"
+  local stdout_log="$dir/stdout.log"
+  local result_file="$dir/result.txt"
+
+  [[ -f "$stdout_log" ]] || return 0
+
+  if command -v ruby >/dev/null 2>&1; then
+    ruby -rjson -e '
+      texts = []
+      File.foreach(ARGV[0]) do |line|
+        begin
+          event = JSON.parse(line)
+        rescue JSON::ParserError
+          next
+        end
+
+        if event["type"] == "result" && event["result"]
+          texts << event["result"].to_s
+        elsif event["type"] == "assistant" && event["message"].is_a?(Hash)
+          Array(event["message"]["content"]).each do |part|
+            if part.is_a?(Hash) && part["type"] == "text" && part["text"]
+              texts << part["text"].to_s
+            end
+          end
+        elsif event["type"] == "message" && event["content"]
+          texts << event["content"].to_s
+        end
+      end
+      puts texts.reject(&:empty?).last.to_s
+    ' "$stdout_log" >"$result_file.tmp" 2>/dev/null || true
+
+    if [[ -s "$result_file.tmp" ]]; then
+      mv "$result_file.tmp" "$result_file"
+      return 0
+    fi
+    rm -f "$result_file.tmp"
+  fi
+
+  cp "$stdout_log" "$result_file"
 }
 
 write_metadata() {
@@ -278,6 +325,8 @@ cmd_run() {
   validate_task_name "$name"
   parse_prompt_and_workdir "$@"
   require_command claude
+  local claude_bin
+  claude_bin="$(resolve_command claude)"
   ensure_base_dirs
 
   local dir prompt exit_code
@@ -292,12 +341,13 @@ cmd_run() {
   set +e
   (
     cd "$EXEC_WORKDIR" || exit 1
-    claude "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
+    "$claude_bin" "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
   )
   exit_code=$?
   set -e
 
   printf '%s\n' "$exit_code" >"$dir/exit-code"
+  extract_result "$dir"
   cat "$dir/stdout.log"
   if [[ "$exit_code" -ne 0 ]]; then
     cat "$dir/stderr.log" >&2
@@ -313,6 +363,8 @@ cmd_start() {
   parse_prompt_and_workdir "$@"
   require_command claude
   require_command tmux
+  local claude_bin
+  claude_bin="$(resolve_command claude)"
   ensure_base_dirs
 
   local dir session
@@ -334,9 +386,42 @@ cmd_start() {
 set +e
 cd $(shell_quote "$EXEC_WORKDIR") || exit 1
 prompt="\$(cat $(shell_quote "$dir/prompt.md"))"
-claude "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
+$(shell_quote "$claude_bin") "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
 code=\$?
 printf '%s\n' "\$code" >$(shell_quote "$dir/exit-code")
+if command -v ruby >/dev/null 2>&1; then
+  ruby -rjson -e '
+    texts = []
+    File.foreach(ARGV[0]) do |line|
+      begin
+        event = JSON.parse(line)
+      rescue JSON::ParserError
+        next
+      end
+
+      if event["type"] == "result" && event["result"]
+        texts << event["result"].to_s
+      elsif event["type"] == "assistant" && event["message"].is_a?(Hash)
+        Array(event["message"]["content"]).each do |part|
+          if part.is_a?(Hash) && part["type"] == "text" && part["text"]
+            texts << part["text"].to_s
+          end
+        end
+      elsif event["type"] == "message" && event["content"]
+        texts << event["content"].to_s
+      end
+    end
+    puts texts.reject(&:empty?).last.to_s
+  ' $(shell_quote "$dir/stdout.log") >$(shell_quote "$dir/result.txt.tmp") 2>/dev/null || true
+  if [[ -s $(shell_quote "$dir/result.txt.tmp") ]]; then
+    mv $(shell_quote "$dir/result.txt.tmp") $(shell_quote "$dir/result.txt")
+  else
+    rm -f $(shell_quote "$dir/result.txt.tmp")
+    cp $(shell_quote "$dir/stdout.log") $(shell_quote "$dir/result.txt")
+  fi
+else
+  cp $(shell_quote "$dir/stdout.log") $(shell_quote "$dir/result.txt")
+fi
 exit "\$code"
 EOF
   chmod +x "$dir/runner.sh"
@@ -383,6 +468,21 @@ cmd_logs() {
     read_file_or_empty "$dir/stdout.log"
     read_file_or_empty "$dir/stderr.log"
   fi
+}
+
+cmd_result() {
+  [[ $# -eq 1 ]] || fail "result requires one task name"
+  local name="$1"
+  validate_task_name "$name"
+
+  local dir
+  dir="$(task_dir "$name")"
+  [[ -d "$dir" ]] || fail "unknown task: $name"
+  if [[ ! -f "$dir/result.txt" && -f "$dir/stdout.log" ]]; then
+    extract_result "$dir"
+  fi
+  [[ -f "$dir/result.txt" ]] || fail "task has no result yet: $name"
+  cat "$dir/result.txt"
 }
 
 cmd_diff() {
@@ -450,6 +550,7 @@ main() {
     start) cmd_start "$@" ;;
     status) cmd_status "$@" ;;
     logs) cmd_logs "$@" ;;
+    result) cmd_result "$@" ;;
     diff) cmd_diff "$@" ;;
     stop) cmd_stop "$@" ;;
     list) cmd_list "$@" ;;

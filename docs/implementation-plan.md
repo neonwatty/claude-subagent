@@ -132,6 +132,16 @@ claude-subagent logs <task-name> --tail
 
 For `tmux` tasks, this can combine captured pane output with log files.
 
+### `result`
+
+Prints the clean final response extracted from Claude's stream-json transcript.
+
+```bash
+claude-subagent result <task-name>
+```
+
+The wrapper writes this to `result.txt` after a task finishes. Raw logs remain available through `logs`.
+
 ### `diff`
 
 Shows the git diff for a task workdir.

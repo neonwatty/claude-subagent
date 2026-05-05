@@ -13,6 +13,7 @@ pass_count=0
 cleanup() {
   if command -v tmux >/dev/null 2>&1; then
     tmux kill-session -t claude-subagent-start-task >/dev/null 2>&1 || true
+    tmux kill-session -t claude-subagent-start-complete-task >/dev/null 2>&1 || true
     tmux kill-session -t claude-subagent-start-worktree-task >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP_DIR"
@@ -53,7 +54,8 @@ set -euo pipefail
 
 prompt="$*"
 
-printf '{"type":"message","content":"fake claude stdout"}\n'
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"fake claude assistant text"}]}}\n'
+printf '{"type":"result","result":"fake claude final result"}\n'
 printf 'fake claude stderr\n' >&2
 
 if [[ "$prompt" == *"SLEEP_TASK"* ]]; then
@@ -107,24 +109,27 @@ test_run_success_logs_metadata_and_diff() {
   printf 'APPEND_README\nREPORT:%s\n' "$report" >"$prompt"
 
   output="$("$BIN" run success-task --prompt "$prompt" --workdir "$repo")"
-  assert_output_contains "$output" "fake claude stdout"
+  assert_output_contains "$output" "fake claude final result"
 
   assert_file "$CLAUDE_SUBAGENT_HOME/tasks/success-task/metadata.json"
   assert_file "$CLAUDE_SUBAGENT_HOME/tasks/success-task/stdout.log"
   assert_file "$CLAUDE_SUBAGENT_HOME/tasks/success-task/stderr.log"
   assert_file "$CLAUDE_SUBAGENT_HOME/tasks/success-task/exit-code"
+  assert_file "$CLAUDE_SUBAGENT_HOME/tasks/success-task/result.txt"
   assert_file "$report"
   assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/success-task/metadata.json" '"taskName": "success-task"'
-  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/success-task/stdout.log" "fake claude stdout"
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/success-task/stdout.log" "fake claude final result"
   assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/success-task/stderr.log" "fake claude stderr"
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/success-task/result.txt" "fake claude final result"
   assert_contains "$repo/README.md" "Edited by fake Claude."
 
   [[ "$("$BIN" status success-task)" == "succeeded" ]] || fail "success-task did not succeed"
+  [[ "$("$BIN" result success-task)" == "fake claude final result" ]] || fail "result command did not return extracted final result"
 
   local diff_output
   diff_output="$("$BIN" diff success-task)"
   assert_output_contains "$diff_output" "Edited by fake Claude."
-  pass "run captures logs, metadata, report, status, and diff"
+  pass "run captures logs, metadata, extracted result, report, status, and diff"
 }
 
 test_run_failure() {
@@ -156,7 +161,7 @@ test_run_with_worktree_isolates_source_repo() {
   printf 'APPEND_README\nREPORT:%s\n' "$report" >"$prompt"
 
   output="$("$BIN" run worktree-task --prompt "$prompt" --workdir "$repo" --worktree)"
-  assert_output_contains "$output" "fake claude stdout"
+  assert_output_contains "$output" "fake claude final result"
 
   task_dir="$CLAUDE_SUBAGENT_HOME/tasks/worktree-task"
   worktree_path="$CLAUDE_SUBAGENT_HOME/worktrees/worktree-task"
@@ -213,6 +218,31 @@ test_start_status_logs_and_stop() {
   pass "start creates a tmux task and stop terminates it"
 }
 
+test_start_writes_result_when_completed() {
+  command -v tmux >/dev/null 2>&1 || fail "tmux is required for completed start test"
+
+  local repo prompt i status result_output
+  repo="$TMP_DIR/fixture-start-complete"
+  prompt="$TMP_DIR/start-complete.md"
+  make_fixture_repo "$repo"
+  printf 'APPEND_README\n' >"$prompt"
+
+  "$BIN" start start-complete-task --prompt "$prompt" --workdir "$repo" >/dev/null
+  status="created"
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    status="$("$BIN" status start-complete-task)"
+    [[ "$status" != "running" && "$status" != "created" ]] && break
+    sleep 0.25
+  done
+
+  [[ "$status" == "succeeded" ]] || fail "start-complete-task should succeed, got $status"
+  assert_file "$CLAUDE_SUBAGENT_HOME/tasks/start-complete-task/result.txt"
+  result_output="$("$BIN" result start-complete-task)"
+  [[ "$result_output" == "fake claude final result" ]] || fail "background result command did not return extracted final result"
+  assert_contains "$repo/README.md" "Edited by fake Claude."
+  pass "start writes extracted result after completion"
+}
+
 test_start_with_worktree_creates_isolated_session() {
   command -v tmux >/dev/null 2>&1 || fail "tmux is required for start worktree test"
 
@@ -242,6 +272,7 @@ test_run_failure
 test_run_with_worktree_isolates_source_repo
 test_unknown_and_invalid_tasks
 test_start_status_logs_and_stop
+test_start_writes_result_when_completed
 test_start_with_worktree_creates_isolated_session
 
 printf '%d tests passed\n' "$pass_count"

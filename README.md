@@ -28,6 +28,7 @@ bin/claude-subagent init
 
 claude-subagent start hyperframes-video --prompt task.md --workdir /path/to/project
 claude-subagent status hyperframes-video
+claude-subagent result hyperframes-video
 claude-subagent logs hyperframes-video
 claude-subagent stop hyperframes-video
 ```
@@ -51,6 +52,14 @@ claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --wor
 ```
 
 This creates a worktree at `~/.claude-subagents/worktrees/<task-name>` on branch `claude-subagent/<task-name>`, records the source repo and dirty state, and runs Claude in the isolated checkout.
+
+Use `result` for the clean final response extracted from Claude's stream-json transcript:
+
+```bash
+claude-subagent result smoke-test
+```
+
+Raw stdout and stderr remain available through `logs`.
 
 ## Tests
 
