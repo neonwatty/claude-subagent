@@ -19,6 +19,8 @@ This repository is the starting point for the bridge. The initial implementation
 - optional git worktree isolation.
 - a Codex skill that defines the operating procedure.
 
+See [docs/implementation-plan.md](docs/implementation-plan.md) for the detailed build and test plan.
+
 ## Intended Usage
 
 ```bash
@@ -35,4 +37,3 @@ claude-subagent stop hyperframes-video
 - Prefer isolated worktrees for repo edits.
 - Capture enough transcript data to audit results.
 - Never merge external agent work blindly.
-
