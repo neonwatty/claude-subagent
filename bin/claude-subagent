@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "claude-subagent is not implemented yet."
+echo "Next step: wire this wrapper to Claude Code, tmux, task logs, and worktree isolation."
+
