@@ -16,6 +16,7 @@ Usage:
   claude-subagent result <task-name>
   claude-subagent inspect <task-name>
   claude-subagent diff <task-name>
+  claude-subagent integrate <task-name> --path <relative-path> [--path <relative-path> ...] [--force]
   claude-subagent stop <task-name>
   claude-subagent cleanup <task-name> [--worktree] [--branch] [--force]
   claude-subagent list
@@ -41,6 +42,14 @@ resolve_command() {
 validate_task_name() {
   local name="$1"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid task name: $name"
+}
+
+validate_relative_path() {
+  local path="$1"
+  [[ -n "$path" ]] || fail "empty path is not allowed"
+  [[ "$path" != /* ]] || fail "path must be relative: $path"
+  [[ "$path" != "." ]] || fail "path must not be repository root"
+  [[ "$path" != *"/../"* && "$path" != "../"* && "$path" != *"/.." ]] || fail "path must not contain ..: $path"
 }
 
 task_dir() {
@@ -134,6 +143,24 @@ print_untracked_file_diffs() {
       printf 'Skipped content: binary file.\n'
     fi
   done
+}
+
+copy_approved_path() {
+  local from_root="$1"
+  local to_root="$2"
+  local rel_path="$3"
+  local src="$from_root/$rel_path"
+  local dst="$to_root/$rel_path"
+
+  [[ -e "$src" ]] || fail "approved path does not exist in task workdir: $rel_path"
+
+  if [[ -d "$src" ]]; then
+    mkdir -p "$dst"
+    cp -R "$src"/. "$dst"/
+  else
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+  fi
 }
 
 extract_result() {
@@ -630,6 +657,68 @@ cmd_diff() {
   print_untracked_file_diffs "$workdir"
 }
 
+cmd_integrate() {
+  [[ $# -ge 3 ]] || fail "integrate requires a task name and at least one --path"
+  local name="$1"
+  shift
+  validate_task_name "$name"
+
+  local force="false"
+  local paths=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path|--paths)
+        [[ $# -ge 2 ]] || fail "$1 requires a relative path"
+        validate_relative_path "$2"
+        paths+=("$2")
+        shift 2
+        ;;
+      --force)
+        force="true"
+        shift
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+  [[ "${#paths[@]}" -gt 0 ]] || fail "integrate requires at least one --path"
+
+  local dir status workdir source_workdir path path_status audit_file
+  dir="$(task_dir "$name")"
+  [[ -d "$dir" ]] || fail "unknown task: $name"
+  status="$(task_status_value "$name")"
+  [[ "$status" != "running" ]] || fail "cannot integrate running task: $name"
+
+  workdir="$(read_file_or_empty "$dir/workdir")"
+  source_workdir="$(read_file_or_empty "$dir/source-workdir")"
+  [[ -n "$workdir" ]] || fail "task has no recorded workdir: $name"
+  [[ -n "$source_workdir" ]] || fail "task has no recorded source workdir; integrate requires a --worktree task"
+  git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "task workdir is not a git repository: $workdir"
+  git -C "$source_workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "source workdir is not a git repository: $source_workdir"
+
+  for path in "${paths[@]}"; do
+    [[ -e "$workdir/$path" ]] || fail "approved path does not exist in task workdir: $path"
+    path_status="$(git -C "$source_workdir" status --short --untracked-files=all -- "$path")"
+    if [[ -n "$path_status" && "$force" != "true" ]]; then
+      fail "source path has local changes; use --force to overwrite: $path"
+    fi
+  done
+
+  audit_file="$dir/integrated-paths.log"
+  {
+    printf 'integrated-at: %s\n' "$(now_utc)"
+    printf 'source-workdir: %s\n' "$source_workdir"
+    printf 'task-workdir: %s\n' "$workdir"
+  } >>"$audit_file"
+
+  for path in "${paths[@]}"; do
+    copy_approved_path "$workdir" "$source_workdir" "$path"
+    printf 'path: %s\n' "$path" >>"$audit_file"
+    printf 'integrated %s -> %s\n' "$path" "$source_workdir/$path"
+  done
+}
+
 cmd_cleanup() {
   [[ $# -ge 1 ]] || fail "cleanup requires a task name"
   local name="$1"
@@ -753,6 +842,7 @@ main() {
     result) cmd_result "$@" ;;
     inspect) cmd_inspect "$@" ;;
     diff) cmd_diff "$@" ;;
+    integrate) cmd_integrate "$@" ;;
     stop) cmd_stop "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
     list) cmd_list "$@" ;;

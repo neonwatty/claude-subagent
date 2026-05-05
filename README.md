@@ -74,6 +74,14 @@ Use `diff` for review before integrating any generated work. It reports tracked,
 claude-subagent diff smoke-test
 ```
 
+After review, integrate only approved paths from the isolated worktree back into the source repo:
+
+```bash
+claude-subagent integrate smoke-test --path creative/hyperframes-pilot
+```
+
+`integrate` refuses to overwrite dirty or untracked source paths unless `--force` is provided.
+
 Use `cleanup` to remove task state after review:
 
 ```bash

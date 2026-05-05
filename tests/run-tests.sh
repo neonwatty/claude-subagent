@@ -268,6 +268,50 @@ test_cleanup_with_worktree_and_branch() {
   pass "cleanup --worktree --branch removes task, worktree, and branch"
 }
 
+test_integrate_copies_approved_paths_from_worktree() {
+  local repo prompt output task_dir
+  repo="$TMP_DIR/fixture-integrate"
+  prompt="$TMP_DIR/integrate.md"
+  make_fixture_repo "$repo"
+  printf 'CREATE_NEW_FILE\n' >"$prompt"
+
+  "$BIN" run integrate-task --prompt "$prompt" --workdir "$repo" --worktree >/dev/null
+  [[ ! -e "$repo/generated/new-file.txt" ]] || fail "source should not have generated file before integrate"
+
+  output="$("$BIN" integrate integrate-task --path generated/new-file.txt)"
+  assert_output_contains "$output" "integrated generated/new-file.txt -> $repo/generated/new-file.txt"
+  assert_contains "$repo/generated/new-file.txt" "New file from fake Claude."
+
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/integrate-task"
+  assert_contains "$task_dir/integrated-paths.log" "path: generated/new-file.txt"
+  pass "integrate copies approved paths from worktree to source"
+}
+
+test_integrate_refuses_dirty_source_path_without_force() {
+  local repo prompt output
+  repo="$TMP_DIR/fixture-integrate-conflict"
+  prompt="$TMP_DIR/integrate-conflict.md"
+  make_fixture_repo "$repo"
+  printf 'APPEND_README\n' >"$prompt"
+
+  "$BIN" run integrate-conflict-task --prompt "$prompt" --workdir "$repo" --worktree >/dev/null
+  printf 'Local source edit.\n' >>"$repo/README.md"
+
+  set +e
+  output="$("$BIN" integrate integrate-conflict-task --path README.md 2>&1)"
+  local code=$?
+  set -e
+
+  [[ "$code" -ne 0 ]] || fail "integrate should refuse dirty source path"
+  assert_output_contains "$output" "source path has local changes"
+  assert_contains "$repo/README.md" "Local source edit."
+
+  output="$("$BIN" integrate integrate-conflict-task --path README.md --force)"
+  assert_output_contains "$output" "integrated README.md -> $repo/README.md"
+  assert_contains "$repo/README.md" "Edited by fake Claude."
+  pass "integrate refuses dirty source path unless forced"
+}
+
 test_unknown_and_invalid_tasks() {
   [[ "$("$BIN" status missing-task)" == "unknown" ]] || fail "missing task should be unknown"
 
@@ -355,6 +399,8 @@ test_cleanup_removes_task_only
 test_run_failure
 test_run_with_worktree_isolates_source_repo
 test_cleanup_with_worktree_and_branch
+test_integrate_copies_approved_paths_from_worktree
+test_integrate_refuses_dirty_source_path_without_force
 test_unknown_and_invalid_tasks
 test_start_status_logs_and_stop
 test_start_writes_result_when_completed

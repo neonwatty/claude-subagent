@@ -51,6 +51,11 @@ claude-subagent diff <task-name>
 ```
 
 6. Review Claude's result, report, logs, and diff before integrating any output.
+7. If the user approves specific output, integrate only those paths:
+
+```bash
+claude-subagent integrate <task-name> --path <relative-path>
+```
 
 ## Rules
 
@@ -61,6 +66,7 @@ claude-subagent diff <task-name>
 - Do not auto-merge, auto-commit, or auto-push Claude's changes unless the user explicitly asks.
 - Treat Claude output as untrusted until Codex reviews the transcript, report, and diff.
 - Use `diff` to review tracked, staged, and untracked generated files; small new text files are printed inline.
+- Use `integrate` only for user-approved relative paths. Do not integrate the whole worktree by default.
 - Use `cleanup <task-name>` only after review. Add `--worktree --branch --force` only when the user wants to discard the isolated worktree and generated changes.
 - If Claude fails or produces ambiguous results, summarize the failure and ask for direction before retrying with broader permissions.
 
