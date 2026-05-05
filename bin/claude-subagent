@@ -78,6 +78,64 @@ read_file_or_empty() {
   fi
 }
 
+git_status_short() {
+  local workdir="$1"
+  git -C "$workdir" status --short --untracked-files=all
+}
+
+git_untracked_files() {
+  local workdir="$1"
+  git -C "$workdir" ls-files --others --exclude-standard
+}
+
+print_git_review_summary() {
+  local workdir="$1"
+  local status unstaged_stat staged_stat untracked_files
+  status="$(git_status_short "$workdir")"
+  if [[ -z "$status" ]]; then
+    printf 'clean\n'
+    return 0
+  fi
+
+  unstaged_stat="$(git -C "$workdir" diff --stat)"
+  staged_stat="$(git -C "$workdir" diff --cached --stat)"
+  untracked_files="$(git_untracked_files "$workdir")"
+
+  printf 'Git status:\n%s\n' "$status"
+  if [[ -n "$staged_stat" ]]; then
+    printf '\nStaged diff stat:\n%s\n' "$staged_stat"
+  fi
+  if [[ -n "$unstaged_stat" ]]; then
+    printf '\nUnstaged diff stat:\n%s\n' "$unstaged_stat"
+  fi
+  if [[ -n "$untracked_files" ]]; then
+    printf '\nUntracked files:\n%s\n' "$untracked_files"
+  fi
+}
+
+print_untracked_file_diffs() {
+  local workdir="$1"
+  local file abs_file size
+
+  git_untracked_files "$workdir" | while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    abs_file="$workdir/$file"
+    [[ -f "$abs_file" ]] || continue
+
+    printf '\nUntracked file: %s\n' "$file"
+    if grep -Iq . "$abs_file"; then
+      size="$(wc -c <"$abs_file" | tr -d ' ')"
+      if [[ "$size" -gt 200000 ]]; then
+        printf 'Skipped content: file is larger than 200KB.\n'
+      else
+        git -C "$workdir" diff --no-index -- /dev/null "$file" || true
+      fi
+    else
+      printf 'Skipped content: binary file.\n'
+    fi
+  done
+}
+
 extract_result() {
   local dir="$1"
   local stdout_log="$dir/stdout.log"
@@ -546,13 +604,8 @@ cmd_inspect() {
   fi
 
   if [[ -n "$workdir" ]] && git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    local diff_stat
-    diff_stat="$(git -C "$workdir" diff --stat)"
-    if [[ -n "$diff_stat" ]]; then
-      printf '\nDiff stat:\n%s\n' "$diff_stat"
-    else
-      printf '\nDiff stat: clean\n'
-    fi
+    printf '\nDiff stat:\n'
+    print_git_review_summary "$workdir"
   fi
 }
 
@@ -567,8 +620,14 @@ cmd_diff() {
   [[ -f "$dir/workdir" ]] || fail "task has no recorded workdir: $name"
   workdir="$(cat "$dir/workdir")"
   git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "workdir is not a git repository: $workdir"
+  printf 'Diff stat:\n'
+  print_git_review_summary "$workdir"
+  printf '\n'
+  git -C "$workdir" diff --cached --stat
   git -C "$workdir" diff --stat
+  git -C "$workdir" diff --cached
   git -C "$workdir" diff
+  print_untracked_file_diffs "$workdir"
 }
 
 cmd_cleanup() {

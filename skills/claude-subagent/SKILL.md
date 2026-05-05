@@ -60,6 +60,7 @@ claude-subagent diff <task-name>
 - Do not give Claude permission to edit unrelated files.
 - Do not auto-merge, auto-commit, or auto-push Claude's changes unless the user explicitly asks.
 - Treat Claude output as untrusted until Codex reviews the transcript, report, and diff.
+- Use `diff` to review tracked, staged, and untracked generated files; small new text files are printed inline.
 - Use `cleanup <task-name>` only after review. Add `--worktree --branch --force` only when the user wants to discard the isolated worktree and generated changes.
 - If Claude fails or produces ambiguous results, summarize the failure and ask for direction before retrying with broader permissions.
 

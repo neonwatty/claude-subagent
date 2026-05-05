@@ -66,6 +66,11 @@ if [[ "$prompt" == *"APPEND_README"* ]]; then
   printf 'Edited by fake Claude.\n' >>README.md
 fi
 
+if [[ "$prompt" == *"CREATE_NEW_FILE"* ]]; then
+  mkdir -p generated
+  printf 'New file from fake Claude.\n' >generated/new-file.txt
+fi
+
 if [[ "$prompt" == *"REPORT:"* ]]; then
   report_path="${prompt##*REPORT:}"
   report_path="${report_path%%$'\n'*}"
@@ -141,6 +146,26 @@ test_inspect_summarizes_task() {
   assert_output_contains "$output" "fake claude final result"
   assert_output_contains "$output" "Diff stat:"
   pass "inspect prints task summary, result, and diff stat"
+}
+
+test_diff_and_inspect_include_untracked_files() {
+  local repo prompt diff_output inspect_output
+  repo="$TMP_DIR/fixture-untracked"
+  prompt="$TMP_DIR/untracked.md"
+  make_fixture_repo "$repo"
+  printf 'CREATE_NEW_FILE\n' >"$prompt"
+
+  "$BIN" run untracked-task --prompt "$prompt" --workdir "$repo" >/dev/null
+
+  diff_output="$("$BIN" diff untracked-task)"
+  assert_output_contains "$diff_output" "?? generated/new-file.txt"
+  assert_output_contains "$diff_output" "Untracked files:"
+  assert_output_contains "$diff_output" "New file from fake Claude."
+
+  inspect_output="$("$BIN" inspect untracked-task)"
+  assert_output_contains "$inspect_output" "?? generated/new-file.txt"
+  assert_output_contains "$inspect_output" "Untracked files:"
+  pass "diff and inspect include untracked files"
 }
 
 test_cleanup_removes_task_only() {
@@ -325,6 +350,7 @@ make_fake_claude
 test_init_and_list
 test_run_success_logs_metadata_and_diff
 test_inspect_summarizes_task
+test_diff_and_inspect_include_untracked_files
 test_cleanup_removes_task_only
 test_run_failure
 test_run_with_worktree_isolates_source_repo

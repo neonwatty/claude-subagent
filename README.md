@@ -68,6 +68,12 @@ Use `inspect` for the high-signal task summary:
 claude-subagent inspect smoke-test
 ```
 
+Use `diff` for review before integrating any generated work. It reports tracked, staged, and untracked files, and prints small text-file contents for new untracked files:
+
+```bash
+claude-subagent diff smoke-test
+```
+
 Use `cleanup` to remove task state after review:
 
 ```bash
