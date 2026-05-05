@@ -48,6 +48,14 @@ tests/run-tests.sh
 
 The tests put a fake `claude` binary first on `PATH` and use `CLAUDE_SUBAGENT_HOME` to isolate all task state in a temporary directory.
 
+## Codex Skill
+
+The Codex skill source lives at [skills/claude-subagent/SKILL.md](skills/claude-subagent/SKILL.md). For this machine, it is also installed at:
+
+```text
+~/.codex/skills/claude-subagent/SKILL.md
+```
+
 ## Design Principles
 
 - Offload only on explicit user request.
