@@ -14,8 +14,10 @@ Usage:
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
   claude-subagent result <task-name>
+  claude-subagent inspect <task-name>
   claude-subagent diff <task-name>
   claude-subagent stop <task-name>
+  claude-subagent cleanup <task-name> [--worktree] [--branch] [--force]
   claude-subagent list
 
 Environment:
@@ -485,6 +487,75 @@ cmd_result() {
   cat "$dir/result.txt"
 }
 
+cmd_inspect() {
+  [[ $# -eq 1 ]] || fail "inspect requires one task name"
+  local name="$1"
+  validate_task_name "$name"
+
+  local dir status mode created workdir source_workdir source_branch source_dirty worktree_enabled worktree_path worktree_branch permission_mode session report_path
+  dir="$(task_dir "$name")"
+  [[ -d "$dir" ]] || fail "unknown task: $name"
+
+  status="$(task_status_value "$name")"
+  mode="$(read_file_or_empty "$dir/mode")"
+  created="$(read_file_or_empty "$dir/created-at")"
+  workdir="$(read_file_or_empty "$dir/workdir")"
+  source_workdir="$(read_file_or_empty "$dir/source-workdir")"
+  source_branch="$(read_file_or_empty "$dir/source-branch")"
+  source_dirty="$(read_file_or_empty "$dir/source-dirty")"
+  worktree_enabled="$(read_file_or_empty "$dir/worktree-enabled")"
+  worktree_path="$(read_file_or_empty "$dir/worktree-path")"
+  worktree_branch="$(read_file_or_empty "$dir/worktree-branch")"
+  permission_mode="$(read_file_or_empty "$dir/permission-mode")"
+  session="$(read_file_or_empty "$dir/session")"
+  report_path="$dir/report.md"
+
+  printf 'Task: %s\n' "$name"
+  printf 'Status: %s\n' "$status"
+  printf 'Mode: %s\n' "$mode"
+  printf 'Created: %s\n' "$created"
+  printf 'Permission mode: %s\n' "$permission_mode"
+  if [[ -n "$session" ]]; then
+    printf 'Session: %s\n' "$session"
+  fi
+  printf 'Workdir: %s\n' "$workdir"
+  if [[ -n "$source_workdir" ]]; then
+    printf 'Source workdir: %s\n' "$source_workdir"
+  fi
+  if [[ -n "$source_branch" ]]; then
+    printf 'Source branch: %s\n' "$source_branch"
+  fi
+  if [[ -n "$source_dirty" ]]; then
+    printf 'Source dirty: %s\n' "$source_dirty"
+  fi
+  printf 'Worktree enabled: %s\n' "${worktree_enabled:-false}"
+  if [[ -n "$worktree_path" ]]; then
+    printf 'Worktree path: %s\n' "$worktree_path"
+  fi
+  if [[ -n "$worktree_branch" ]]; then
+    printf 'Worktree branch: %s\n' "$worktree_branch"
+  fi
+  if [[ -f "$report_path" ]]; then
+    printf 'Report: %s\n' "$report_path"
+  fi
+
+  if [[ -f "$dir/result.txt" ]]; then
+    printf '\nResult:\n'
+    cat "$dir/result.txt"
+    printf '\n'
+  fi
+
+  if [[ -n "$workdir" ]] && git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    local diff_stat
+    diff_stat="$(git -C "$workdir" diff --stat)"
+    if [[ -n "$diff_stat" ]]; then
+      printf '\nDiff stat:\n%s\n' "$diff_stat"
+    else
+      printf '\nDiff stat: clean\n'
+    fi
+  fi
+}
+
 cmd_diff() {
   [[ $# -eq 1 ]] || fail "diff requires one task name"
   local name="$1"
@@ -498,6 +569,76 @@ cmd_diff() {
   git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "workdir is not a git repository: $workdir"
   git -C "$workdir" diff --stat
   git -C "$workdir" diff
+}
+
+cmd_cleanup() {
+  [[ $# -ge 1 ]] || fail "cleanup requires a task name"
+  local name="$1"
+  shift
+  validate_task_name "$name"
+
+  local remove_worktree="false"
+  local remove_branch="false"
+  local force_remove="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --worktree)
+        remove_worktree="true"
+        shift
+        ;;
+      --branch)
+        remove_branch="true"
+        shift
+        ;;
+      --force)
+        force_remove="true"
+        shift
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+
+  local dir status source_workdir worktree_path worktree_branch
+  dir="$(task_dir "$name")"
+  [[ -d "$dir" ]] || fail "unknown task: $name"
+  status="$(task_status_value "$name")"
+  [[ "$status" != "running" ]] || fail "cannot cleanup running task: $name"
+
+  source_workdir="$(read_file_or_empty "$dir/source-workdir")"
+  worktree_path="$(read_file_or_empty "$dir/worktree-path")"
+  worktree_branch="$(read_file_or_empty "$dir/worktree-branch")"
+
+  if [[ "$remove_worktree" == "true" ]]; then
+    require_command git
+    [[ -n "$worktree_path" ]] || fail "task has no recorded worktree: $name"
+    if [[ -e "$worktree_path" ]]; then
+      local repo_for_worktree="$source_workdir"
+      if [[ -z "$repo_for_worktree" || ! -d "$repo_for_worktree/.git" ]]; then
+        repo_for_worktree="$worktree_path"
+      fi
+      local remove_args=()
+      if [[ "$force_remove" == "true" ]]; then
+        remove_args+=(--force)
+      fi
+      git -C "$repo_for_worktree" worktree remove "${remove_args[@]}" "$worktree_path" || fail "failed to remove worktree: $worktree_path"
+      printf 'removed worktree %s\n' "$worktree_path"
+    else
+      printf 'worktree already missing %s\n' "$worktree_path"
+    fi
+  fi
+
+  if [[ "$remove_branch" == "true" ]]; then
+    require_command git
+    [[ -n "$worktree_branch" ]] || fail "task has no recorded worktree branch: $name"
+    [[ -n "$source_workdir" ]] || fail "task has no recorded source workdir: $name"
+    git -C "$source_workdir" branch -D "$worktree_branch" || fail "failed to delete branch: $worktree_branch"
+    printf 'deleted branch %s\n' "$worktree_branch"
+  fi
+
+  rm -rf "$dir"
+  printf 'removed task %s\n' "$name"
 }
 
 cmd_stop() {
@@ -551,8 +692,10 @@ main() {
     status) cmd_status "$@" ;;
     logs) cmd_logs "$@" ;;
     result) cmd_result "$@" ;;
+    inspect) cmd_inspect "$@" ;;
     diff) cmd_diff "$@" ;;
     stop) cmd_stop "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
     list) cmd_list "$@" ;;
     -h|--help|help) usage ;;
     *) fail "unknown command: $command" ;;

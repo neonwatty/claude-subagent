@@ -152,6 +152,32 @@ claude-subagent diff <task-name>
 
 This should refuse to run when the recorded workdir is not a git repository.
 
+### `inspect`
+
+Prints the high-signal task summary for review.
+
+```bash
+claude-subagent inspect <task-name>
+```
+
+Includes status, mode, source repo, source dirty state, worktree path, branch, result, report path, and diff stat.
+
+### `cleanup`
+
+Removes task state after review.
+
+```bash
+claude-subagent cleanup <task-name>
+```
+
+Worktree and branch deletion are explicit:
+
+```bash
+claude-subagent cleanup <task-name> --worktree --branch --force
+```
+
+`--force` is required when discarding dirty generated worktrees.
+
 ### `stop`
 
 Stops a running background task.

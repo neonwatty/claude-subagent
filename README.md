@@ -30,6 +30,7 @@ claude-subagent start hyperframes-video --prompt task.md --workdir /path/to/proj
 claude-subagent status hyperframes-video
 claude-subagent result hyperframes-video
 claude-subagent logs hyperframes-video
+claude-subagent inspect hyperframes-video
 claude-subagent stop hyperframes-video
 ```
 
@@ -60,6 +61,24 @@ claude-subagent result smoke-test
 ```
 
 Raw stdout and stderr remain available through `logs`.
+
+Use `inspect` for the high-signal task summary:
+
+```bash
+claude-subagent inspect smoke-test
+```
+
+Use `cleanup` to remove task state after review:
+
+```bash
+claude-subagent cleanup smoke-test
+```
+
+For isolated worktree tasks, explicitly opt in to deleting the worktree and branch. Add `--force` when discarding dirty generated work:
+
+```bash
+claude-subagent cleanup smoke-test --worktree --branch --force
+```
 
 ## Tests
 

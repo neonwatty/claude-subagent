@@ -132,6 +132,36 @@ test_run_success_logs_metadata_and_diff() {
   pass "run captures logs, metadata, extracted result, report, status, and diff"
 }
 
+test_inspect_summarizes_task() {
+  local output
+  output="$("$BIN" inspect success-task)"
+  assert_output_contains "$output" "Task: success-task"
+  assert_output_contains "$output" "Status: succeeded"
+  assert_output_contains "$output" "Result:"
+  assert_output_contains "$output" "fake claude final result"
+  assert_output_contains "$output" "Diff stat:"
+  pass "inspect prints task summary, result, and diff stat"
+}
+
+test_cleanup_removes_task_only() {
+  local repo prompt task_dir output
+  repo="$TMP_DIR/fixture-cleanup"
+  prompt="$TMP_DIR/cleanup.md"
+  make_fixture_repo "$repo"
+  printf 'APPEND_README\n' >"$prompt"
+
+  "$BIN" run cleanup-task --prompt "$prompt" --workdir "$repo" >/dev/null
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/cleanup-task"
+  [[ -d "$task_dir" ]] || fail "cleanup-task should exist before cleanup"
+
+  output="$("$BIN" cleanup cleanup-task)"
+  assert_output_contains "$output" "removed task cleanup-task"
+  [[ ! -d "$task_dir" ]] || fail "cleanup-task directory should be removed"
+  [[ "$("$BIN" status cleanup-task)" == "unknown" ]] || fail "cleanup-task should be unknown after cleanup"
+  assert_contains "$repo/README.md" "Edited by fake Claude."
+  pass "cleanup removes task state without touching workdir"
+}
+
 test_run_failure() {
   local repo prompt status
   repo="$TMP_DIR/fixture-fail"
@@ -185,6 +215,32 @@ test_run_with_worktree_isolates_source_repo() {
   diff_output="$("$BIN" diff worktree-task)"
   assert_output_contains "$diff_output" "Edited by fake Claude."
   pass "run --worktree isolates edits from the source repo"
+}
+
+test_cleanup_with_worktree_and_branch() {
+  local repo prompt task_dir worktree_path branch output
+  repo="$TMP_DIR/fixture-cleanup-worktree"
+  prompt="$TMP_DIR/cleanup-worktree.md"
+  make_fixture_repo "$repo"
+  printf 'APPEND_README\n' >"$prompt"
+
+  "$BIN" run cleanup-worktree-task --prompt "$prompt" --workdir "$repo" --worktree >/dev/null
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/cleanup-worktree-task"
+  worktree_path="$CLAUDE_SUBAGENT_HOME/worktrees/cleanup-worktree-task"
+  branch="claude-subagent/cleanup-worktree-task"
+
+  [[ -d "$task_dir" ]] || fail "cleanup-worktree-task should exist before cleanup"
+  [[ -d "$worktree_path" ]] || fail "worktree should exist before cleanup"
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" || fail "worktree branch should exist before cleanup"
+
+  output="$("$BIN" cleanup cleanup-worktree-task --worktree --branch --force)"
+  assert_output_contains "$output" "removed worktree $worktree_path"
+  assert_output_contains "$output" "deleted branch $branch"
+  assert_output_contains "$output" "removed task cleanup-worktree-task"
+  [[ ! -d "$task_dir" ]] || fail "task directory should be removed"
+  [[ ! -e "$worktree_path" ]] || fail "worktree should be removed"
+  ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" || fail "worktree branch should be deleted"
+  pass "cleanup --worktree --branch removes task, worktree, and branch"
 }
 
 test_unknown_and_invalid_tasks() {
@@ -268,8 +324,11 @@ test_start_with_worktree_creates_isolated_session() {
 make_fake_claude
 test_init_and_list
 test_run_success_logs_metadata_and_diff
+test_inspect_summarizes_task
+test_cleanup_removes_task_only
 test_run_failure
 test_run_with_worktree_isolates_source_repo
+test_cleanup_with_worktree_and_branch
 test_unknown_and_invalid_tasks
 test_start_status_logs_and_stop
 test_start_writes_result_when_completed
