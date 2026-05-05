@@ -8,8 +8,8 @@ usage() {
   cat <<'EOF'
 Usage:
   claude-subagent init
-  claude-subagent run <task-name> --prompt <file> --workdir <path>
-  claude-subagent start <task-name> --prompt <file> --workdir <path>
+  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>]
+  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>]
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
   claude-subagent diff <task-name>
@@ -75,13 +75,15 @@ write_metadata() {
   local mode="$3"
   local prompt_file="$4"
   local workdir="$5"
-  local session_name="${6:-}"
+  local permission_mode="$6"
+  local session_name="${7:-}"
   local created_at
   created_at="$(now_utc)"
 
   printf '%s\n' "$mode" >"$dir/mode"
   printf '%s\n' "$created_at" >"$dir/created-at"
   printf '%s\n' "$workdir" >"$dir/workdir"
+  printf '%s\n' "$permission_mode" >"$dir/permission-mode"
   if [[ -n "$session_name" ]]; then
     printf '%s\n' "$session_name" >"$dir/session"
   fi
@@ -92,6 +94,7 @@ write_metadata() {
   "mode": "$(json_escape "$mode")",
   "promptPath": "$(json_escape "$prompt_file")",
   "workdir": "$(json_escape "$workdir")",
+  "permissionMode": "$(json_escape "$permission_mode")",
   "sessionName": "$(json_escape "$session_name")",
   "createdAt": "$(json_escape "$created_at")"
 }
@@ -101,6 +104,7 @@ EOF
 parse_prompt_and_workdir() {
   PROMPT_FILE=""
   WORKDIR=""
+  PERMISSION_MODE="default"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -112,6 +116,18 @@ parse_prompt_and_workdir() {
       --workdir)
         [[ $# -ge 2 ]] || fail "--workdir requires a path"
         WORKDIR="$2"
+        shift 2
+        ;;
+      --permission-mode)
+        [[ $# -ge 2 ]] || fail "--permission-mode requires a mode"
+        case "$2" in
+          acceptEdits|auto|bypassPermissions|default|dontAsk|plan)
+            PERMISSION_MODE="$2"
+            ;;
+          *)
+            fail "invalid permission mode: $2"
+            ;;
+        esac
         shift 2
         ;;
       *)
@@ -184,13 +200,13 @@ cmd_run() {
   rm -rf "$dir"
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
-  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$WORKDIR"
+  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$WORKDIR" "$PERMISSION_MODE"
   prompt="$(cat "$PROMPT_FILE")"
 
   set +e
   (
     cd "$WORKDIR" || exit 1
-    claude --print --output-format stream-json "$prompt" >"$dir/stdout.log" 2>"$dir/stderr.log"
+    claude "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
   )
   exit_code=$?
   set -e
@@ -224,14 +240,14 @@ cmd_start() {
   rm -rf "$dir"
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
-  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$WORKDIR" "$session"
+  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$WORKDIR" "$PERMISSION_MODE" "$session"
 
   cat >"$dir/runner.sh" <<EOF
 #!/usr/bin/env bash
 set +e
 cd $(shell_quote "$WORKDIR") || exit 1
 prompt="\$(cat $(shell_quote "$dir/prompt.md"))"
-claude --print --output-format stream-json "\$prompt" >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
+claude "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
 code=\$?
 printf '%s\n' "\$code" >$(shell_quote "$dir/exit-code")
 exit "\$code"

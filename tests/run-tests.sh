@@ -50,7 +50,7 @@ make_fake_claude() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-prompt="${*: -1}"
+prompt="$*"
 
 printf '{"type":"message","content":"fake claude stdout"}\n'
 printf 'fake claude stderr\n' >&2
@@ -66,6 +66,7 @@ fi
 if [[ "$prompt" == *"REPORT:"* ]]; then
   report_path="${prompt##*REPORT:}"
   report_path="${report_path%%$'\n'*}"
+  report_path="${report_path%% --*}"
   mkdir -p "$(dirname "$report_path")"
   printf 'Fake Claude report.\n' >"$report_path"
 fi

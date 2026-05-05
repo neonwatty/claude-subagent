@@ -79,7 +79,7 @@ claude-subagent run <task-name> --prompt <file> --workdir <path>
 Initial Claude invocation:
 
 ```bash
-claude --print --output-format stream-json "<prompt contents>"
+claude "<prompt contents>" --print --verbose --output-format stream-json --add-dir "<task dir>"
 ```
 
 The wrapper should execute from `--workdir`, tee stdout and stderr to task logs, and write the final exit code.
@@ -330,4 +330,3 @@ Assertions:
 - We need to decide whether real Claude background jobs should use our own `tmux` wrapper or Claude Code's native `--worktree --tmux` behavior.
 - We need to decide whether the wrapper should install the Codex skill automatically or keep that as a separate command.
 - We need to decide the default permission mode for Claude. The conservative default should be Claude Code's normal permissions, with any bypass mode requiring an explicit flag.
-

@@ -38,6 +38,12 @@ For a bounded one-shot task:
 claude-subagent run smoke-test --prompt task.md --workdir /path/to/project
 ```
 
+For non-interactive edit tasks, opt in to Claude Code's edit-accepting permission mode:
+
+```bash
+claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --permission-mode acceptEdits
+```
+
 ## Tests
 
 Run the deterministic fake-agent test suite:

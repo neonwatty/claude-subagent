@@ -26,6 +26,8 @@ Use this skill only when the user explicitly asks to offload, delegate, spin up 
 claude-subagent run <task-name> --prompt <prompt-file> --workdir <path>
 ```
 
+For non-interactive edit tasks, add `--permission-mode acceptEdits` only when the user has explicitly asked Claude to make edits.
+
 Use `start` instead of `run` for longer work:
 
 ```bash
@@ -61,4 +63,3 @@ By default, task state is stored under:
 ```
 
 Use `CLAUDE_SUBAGENT_HOME` only for tests or temporary isolated runs.
-
