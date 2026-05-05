@@ -47,6 +47,8 @@ Default base directory:
       pid
       exit-code
       workdir
+  worktrees/
+    <task-name>/
 ```
 
 If a task uses an isolated worktree, the worktree path should be recorded in `workdir`.
@@ -74,6 +76,12 @@ Runs a short task synchronously and exits with Claude's result code.
 
 ```bash
 claude-subagent run <task-name> --prompt <file> --workdir <path>
+```
+
+Use `--worktree` for isolated repo edits:
+
+```bash
+claude-subagent run <task-name> --prompt <file> --workdir <path> --worktree --permission-mode acceptEdits
 ```
 
 Initial Claude invocation:
@@ -200,6 +208,18 @@ For tasks that edit a git repository:
 3. Launch Claude in the isolated worktree.
 4. Review the resulting diff from Codex.
 5. Integrate by cherry-picking, manually copying, or opening a PR, depending on the task.
+
+The first implementation creates worktrees at:
+
+```text
+~/.claude-subagents/worktrees/<task-name>
+```
+
+with branches named:
+
+```text
+claude-subagent/<task-name>
+```
 
 For tasks that generate standalone artifacts:
 

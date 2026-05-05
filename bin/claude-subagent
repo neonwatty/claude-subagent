@@ -3,13 +3,14 @@ set -euo pipefail
 
 BASE_DIR="${CLAUDE_SUBAGENT_HOME:-$HOME/.claude-subagents}"
 TASKS_DIR="$BASE_DIR/tasks"
+WORKTREES_DIR="$BASE_DIR/worktrees"
 
 usage() {
   cat <<'EOF'
 Usage:
   claude-subagent init
-  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>]
-  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>]
+  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree]
+  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree]
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
   claude-subagent diff <task-name>
@@ -60,6 +61,7 @@ now_utc() {
 
 ensure_base_dirs() {
   mkdir -p "$TASKS_DIR"
+  mkdir -p "$WORKTREES_DIR"
 }
 
 read_file_or_empty() {
@@ -76,7 +78,13 @@ write_metadata() {
   local prompt_file="$4"
   local workdir="$5"
   local permission_mode="$6"
-  local session_name="${7:-}"
+  local source_workdir="$7"
+  local worktree_enabled="$8"
+  local worktree_branch="$9"
+  local worktree_path="${10}"
+  local source_branch="${11}"
+  local source_dirty="${12}"
+  local session_name="${13:-}"
   local created_at
   created_at="$(now_utc)"
 
@@ -84,6 +92,18 @@ write_metadata() {
   printf '%s\n' "$created_at" >"$dir/created-at"
   printf '%s\n' "$workdir" >"$dir/workdir"
   printf '%s\n' "$permission_mode" >"$dir/permission-mode"
+  printf '%s\n' "$source_workdir" >"$dir/source-workdir"
+  printf '%s\n' "$worktree_enabled" >"$dir/worktree-enabled"
+  if [[ -n "$worktree_branch" ]]; then
+    printf '%s\n' "$worktree_branch" >"$dir/worktree-branch"
+  fi
+  if [[ -n "$worktree_path" ]]; then
+    printf '%s\n' "$worktree_path" >"$dir/worktree-path"
+  fi
+  if [[ -n "$source_branch" ]]; then
+    printf '%s\n' "$source_branch" >"$dir/source-branch"
+  fi
+  printf '%s\n' "$source_dirty" >"$dir/source-dirty"
   if [[ -n "$session_name" ]]; then
     printf '%s\n' "$session_name" >"$dir/session"
   fi
@@ -95,6 +115,12 @@ write_metadata() {
   "promptPath": "$(json_escape "$prompt_file")",
   "workdir": "$(json_escape "$workdir")",
   "permissionMode": "$(json_escape "$permission_mode")",
+  "sourceWorkdir": "$(json_escape "$source_workdir")",
+  "worktreeEnabled": "$(json_escape "$worktree_enabled")",
+  "worktreeBranch": "$(json_escape "$worktree_branch")",
+  "worktreePath": "$(json_escape "$worktree_path")",
+  "sourceBranch": "$(json_escape "$source_branch")",
+  "sourceDirty": "$(json_escape "$source_dirty")",
   "sessionName": "$(json_escape "$session_name")",
   "createdAt": "$(json_escape "$created_at")"
 }
@@ -105,6 +131,7 @@ parse_prompt_and_workdir() {
   PROMPT_FILE=""
   WORKDIR=""
   PERMISSION_MODE="default"
+  USE_WORKTREE="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -130,6 +157,10 @@ parse_prompt_and_workdir() {
         esac
         shift 2
         ;;
+      --worktree)
+        USE_WORKTREE="true"
+        shift
+        ;;
       *)
         fail "unknown option: $1"
         ;;
@@ -143,6 +174,60 @@ parse_prompt_and_workdir() {
 
   PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")"
   WORKDIR="$(cd "$WORKDIR" && pwd)"
+}
+
+prepare_execution_workdir() {
+  local name="$1"
+  local dir="$2"
+
+  SOURCE_WORKDIR="$WORKDIR"
+  EXEC_WORKDIR="$WORKDIR"
+  WORKTREE_BRANCH=""
+  WORKTREE_PATH=""
+  SOURCE_BRANCH=""
+  SOURCE_DIRTY="unknown"
+
+  if git -C "$SOURCE_WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    SOURCE_BRANCH="$(git -C "$SOURCE_WORKDIR" branch --show-current 2>/dev/null || true)"
+    if [[ -z "$SOURCE_BRANCH" ]]; then
+      SOURCE_BRANCH="$(git -C "$SOURCE_WORKDIR" rev-parse --short HEAD 2>/dev/null || true)"
+    fi
+    if [[ -n "$(git -C "$SOURCE_WORKDIR" status --porcelain)" ]]; then
+      SOURCE_DIRTY="true"
+    else
+      SOURCE_DIRTY="false"
+    fi
+  fi
+
+  if [[ "$USE_WORKTREE" != "true" ]]; then
+    return
+  fi
+
+  require_command git
+  git -C "$SOURCE_WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "--worktree requires --workdir to be inside a git repository"
+
+  local repo_root prefix worktree_exec_subdir
+  repo_root="$(git -C "$SOURCE_WORKDIR" rev-parse --show-toplevel)"
+  prefix="$(git -C "$SOURCE_WORKDIR" rev-parse --show-prefix)"
+  WORKTREE_BRANCH="claude-subagent/$name"
+  WORKTREE_PATH="$WORKTREES_DIR/$name"
+
+  [[ ! -e "$WORKTREE_PATH" ]] || fail "worktree path already exists: $WORKTREE_PATH"
+  if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$WORKTREE_BRANCH"; then
+    fail "worktree branch already exists: $WORKTREE_BRANCH"
+  fi
+
+  git -C "$repo_root" worktree add -b "$WORKTREE_BRANCH" "$WORKTREE_PATH" HEAD >"$dir/worktree-create.log" 2>&1 || {
+    cat "$dir/worktree-create.log" >&2
+    fail "failed to create worktree"
+  }
+
+  worktree_exec_subdir="${prefix%/}"
+  if [[ -n "$worktree_exec_subdir" ]]; then
+    EXEC_WORKDIR="$WORKTREE_PATH/$worktree_exec_subdir"
+  else
+    EXEC_WORKDIR="$WORKTREE_PATH"
+  fi
 }
 
 task_status_value() {
@@ -200,12 +285,13 @@ cmd_run() {
   rm -rf "$dir"
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
-  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$WORKDIR" "$PERMISSION_MODE"
+  prepare_execution_workdir "$name" "$dir"
+  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY"
   prompt="$(cat "$PROMPT_FILE")"
 
   set +e
   (
-    cd "$WORKDIR" || exit 1
+    cd "$EXEC_WORKDIR" || exit 1
     claude "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
   )
   exit_code=$?
@@ -240,12 +326,13 @@ cmd_start() {
   rm -rf "$dir"
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
-  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$WORKDIR" "$PERMISSION_MODE" "$session"
+  prepare_execution_workdir "$name" "$dir"
+  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session"
 
   cat >"$dir/runner.sh" <<EOF
 #!/usr/bin/env bash
 set +e
-cd $(shell_quote "$WORKDIR") || exit 1
+cd $(shell_quote "$EXEC_WORKDIR") || exit 1
 prompt="\$(cat $(shell_quote "$dir/prompt.md"))"
 claude "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
 code=\$?

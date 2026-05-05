@@ -13,6 +13,7 @@ pass_count=0
 cleanup() {
   if command -v tmux >/dev/null 2>&1; then
     tmux kill-session -t claude-subagent-start-task >/dev/null 2>&1 || true
+    tmux kill-session -t claude-subagent-start-worktree-task >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP_DIR"
 }
@@ -145,6 +146,42 @@ test_run_failure() {
   pass "run records failed Claude exit codes"
 }
 
+test_run_with_worktree_isolates_source_repo() {
+  local repo prompt report output task_dir worktree_path source_head
+  repo="$TMP_DIR/fixture-worktree"
+  prompt="$TMP_DIR/worktree.md"
+  make_fixture_repo "$repo"
+  source_head="$(git -C "$repo" rev-parse HEAD)"
+  report="$CLAUDE_SUBAGENT_HOME/tasks/worktree-task/report.md"
+  printf 'APPEND_README\nREPORT:%s\n' "$report" >"$prompt"
+
+  output="$("$BIN" run worktree-task --prompt "$prompt" --workdir "$repo" --worktree)"
+  assert_output_contains "$output" "fake claude stdout"
+
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/worktree-task"
+  worktree_path="$CLAUDE_SUBAGENT_HOME/worktrees/worktree-task"
+
+  assert_file "$task_dir/metadata.json"
+  assert_file "$task_dir/worktree-path"
+  assert_file "$task_dir/worktree-branch"
+  assert_file "$task_dir/source-workdir"
+  assert_file "$task_dir/source-dirty"
+  assert_contains "$task_dir/metadata.json" '"worktreeEnabled": "true"'
+  assert_contains "$task_dir/metadata.json" '"worktreeBranch": "claude-subagent/worktree-task"'
+  [[ "$(cat "$task_dir/workdir")" == "$worktree_path" ]] || fail "task workdir should be the worktree path"
+  [[ "$(cat "$task_dir/source-workdir")" == "$repo" ]] || fail "source workdir should be recorded"
+  [[ "$(cat "$task_dir/source-dirty")" == "false" ]] || fail "source dirty state should be false"
+  [[ "$(git -C "$worktree_path" branch --show-current)" == "claude-subagent/worktree-task" ]] || fail "worktree branch was not created"
+  assert_contains "$worktree_path/README.md" "Edited by fake Claude."
+  [[ "$(git -C "$repo" rev-parse HEAD)" == "$source_head" ]] || fail "source HEAD changed"
+  ! grep -F "Edited by fake Claude." "$repo/README.md" >/dev/null || fail "source README was modified"
+
+  local diff_output
+  diff_output="$("$BIN" diff worktree-task)"
+  assert_output_contains "$diff_output" "Edited by fake Claude."
+  pass "run --worktree isolates edits from the source repo"
+}
+
 test_unknown_and_invalid_tasks() {
   [[ "$("$BIN" status missing-task)" == "unknown" ]] || fail "missing task should be unknown"
 
@@ -176,11 +213,35 @@ test_start_status_logs_and_stop() {
   pass "start creates a tmux task and stop terminates it"
 }
 
+test_start_with_worktree_creates_isolated_session() {
+  command -v tmux >/dev/null 2>&1 || fail "tmux is required for start worktree test"
+
+  local repo prompt task_dir worktree_path
+  repo="$TMP_DIR/fixture-start-worktree"
+  prompt="$TMP_DIR/start-worktree.md"
+  make_fixture_repo "$repo"
+  printf 'SLEEP_TASK\n' >"$prompt"
+
+  "$BIN" start start-worktree-task --prompt "$prompt" --workdir "$repo" --worktree >/dev/null
+  [[ "$("$BIN" status start-worktree-task)" == "running" ]] || fail "start-worktree-task should be running"
+
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/start-worktree-task"
+  worktree_path="$CLAUDE_SUBAGENT_HOME/worktrees/start-worktree-task"
+  [[ "$(cat "$task_dir/workdir")" == "$worktree_path" ]] || fail "start task workdir should be the worktree path"
+  [[ "$(cat "$task_dir/source-workdir")" == "$repo" ]] || fail "start task source workdir should be recorded"
+  [[ "$(git -C "$worktree_path" branch --show-current)" == "claude-subagent/start-worktree-task" ]] || fail "start worktree branch was not created"
+
+  "$BIN" stop start-worktree-task >/dev/null
+  pass "start --worktree creates an isolated tmux task"
+}
+
 make_fake_claude
 test_init_and_list
 test_run_success_logs_metadata_and_diff
 test_run_failure
+test_run_with_worktree_isolates_source_repo
 test_unknown_and_invalid_tasks
 test_start_status_logs_and_stop
+test_start_with_worktree_creates_isolated_session
 
 printf '%d tests passed\n' "$pass_count"

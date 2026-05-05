@@ -44,6 +44,14 @@ For non-interactive edit tasks, opt in to Claude Code's edit-accepting permissio
 claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --permission-mode acceptEdits
 ```
 
+For repo-editing tasks, prefer an isolated git worktree:
+
+```bash
+claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --worktree --permission-mode acceptEdits
+```
+
+This creates a worktree at `~/.claude-subagents/worktrees/<task-name>` on branch `claude-subagent/<task-name>`, records the source repo and dirty state, and runs Claude in the isolated checkout.
+
 ## Tests
 
 Run the deterministic fake-agent test suite:

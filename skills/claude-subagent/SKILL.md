@@ -28,6 +28,12 @@ claude-subagent run <task-name> --prompt <prompt-file> --workdir <path>
 
 For non-interactive edit tasks, add `--permission-mode acceptEdits` only when the user has explicitly asked Claude to make edits.
 
+For repo-editing tasks, prefer `--worktree`:
+
+```bash
+claude-subagent run <task-name> --prompt <prompt-file> --workdir <path> --worktree --permission-mode acceptEdits
+```
+
 Use `start` instead of `run` for longer work:
 
 ```bash
