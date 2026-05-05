@@ -24,11 +24,29 @@ See [docs/implementation-plan.md](docs/implementation-plan.md) for the detailed 
 ## Intended Usage
 
 ```bash
+bin/claude-subagent init
+
 claude-subagent start hyperframes-video --prompt task.md --workdir /path/to/project
 claude-subagent status hyperframes-video
 claude-subagent logs hyperframes-video
 claude-subagent stop hyperframes-video
 ```
+
+For a bounded one-shot task:
+
+```bash
+claude-subagent run smoke-test --prompt task.md --workdir /path/to/project
+```
+
+## Tests
+
+Run the deterministic fake-agent test suite:
+
+```bash
+tests/run-tests.sh
+```
+
+The tests put a fake `claude` binary first on `PATH` and use `CLAUDE_SUBAGENT_HOME` to isolate all task state in a temporary directory.
 
 ## Design Principles
 
