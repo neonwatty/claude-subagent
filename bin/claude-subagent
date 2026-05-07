@@ -694,12 +694,12 @@ cmd_run() {
 
   local dir prompt exit_code
   dir="$(task_dir "$name")"
+  prompt="$(cat "$PROMPT_FILE")"
   rm -rf "$dir"
   mkdir -p "$dir"
-  cp "$PROMPT_FILE" "$dir/prompt.md"
+  printf '%s\n' "$prompt" >"$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
   write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "" "$TIMEOUT_SECONDS" "$TOOLS" "$ALLOWED_TOOLS" "$DISALLOWED_TOOLS"
-  prompt="$(cat "$PROMPT_FILE")"
   build_claude_args "$dir"
 
   set +e
@@ -735,7 +735,7 @@ cmd_start() {
   claude_bin="$(resolve_command claude)"
   ensure_base_dirs
 
-  local dir session
+  local dir session prompt
   dir="$(task_dir "$name")"
   session="claude-subagent-${name//./-}"
 
@@ -743,9 +743,10 @@ cmd_start() {
     fail "tmux session already exists: $session"
   fi
 
+  prompt="$(cat "$PROMPT_FILE")"
   rm -rf "$dir"
   mkdir -p "$dir"
-  cp "$PROMPT_FILE" "$dir/prompt.md"
+  printf '%s\n' "$prompt" >"$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
   write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session" "$TIMEOUT_SECONDS" "$TOOLS" "$ALLOWED_TOOLS" "$DISALLOWED_TOOLS"
   build_claude_args "$dir"

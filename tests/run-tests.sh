@@ -195,6 +195,23 @@ test_run_success_logs_metadata_and_diff() {
   pass "run captures logs, metadata, extracted result, report, status, and diff"
 }
 
+test_run_preserves_prompt_from_task_dir() {
+  local repo task_dir prompt output
+  repo="$TMP_DIR/fixture-task-prompt"
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/task-prompt"
+  prompt="$task_dir/prompt.md"
+  make_fixture_repo "$repo"
+  mkdir -p "$task_dir"
+  printf 'APPEND_README\n' >"$prompt"
+
+  output="$("$BIN" run task-prompt --prompt "$prompt" --workdir "$repo")"
+  assert_output_contains "$output" "fake claude final result"
+  assert_file "$prompt"
+  assert_contains "$prompt" "APPEND_README"
+  assert_contains "$repo/README.md" "Edited by fake Claude."
+  pass "run preserves prompts generated inside task directories"
+}
+
 test_inspect_summarizes_task() {
   local output
   output="$("$BIN" inspect success-task)"
@@ -507,6 +524,7 @@ test_init_and_list
 test_prompt_hyperframes_generates_handoff
 test_prompt_hyperframes_refuses_overwrite_without_force
 test_run_success_logs_metadata_and_diff
+test_run_preserves_prompt_from_task_dir
 test_inspect_summarizes_task
 test_diff_and_inspect_include_untracked_files
 test_cleanup_removes_task_only
