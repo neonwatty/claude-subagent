@@ -9,8 +9,8 @@ usage() {
   cat <<'EOF'
 Usage:
   claude-subagent init
-  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>]
-  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>]
+  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>] [--tools <tools>] [--allowed-tools <tools>] [--disallowed-tools <tools>]
+  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>] [--tools <tools>] [--allowed-tools <tools>] [--disallowed-tools <tools>]
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
   claude-subagent result <task-name>
@@ -84,6 +84,14 @@ json_escape() {
 shell_quote() {
   local value="$1"
   printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+shell_join_args() {
+  local arg
+  for arg in "$@"; do
+    shell_quote "$arg"
+    printf ' '
+  done
 }
 
 now_utc() {
@@ -235,6 +243,9 @@ write_metadata() {
   local source_dirty="${12}"
   local session_name="${13:-}"
   local timeout_seconds="${14:-}"
+  local tools="${15:-}"
+  local allowed_tools="${16:-}"
+  local disallowed_tools="${17:-}"
   local created_at
   created_at="$(now_utc)"
 
@@ -260,6 +271,15 @@ write_metadata() {
   if [[ -n "$timeout_seconds" ]]; then
     printf '%s\n' "$timeout_seconds" >"$dir/timeout-seconds"
   fi
+  if [[ -n "$tools" ]]; then
+    printf '%s\n' "$tools" >"$dir/tools"
+  fi
+  if [[ -n "$allowed_tools" ]]; then
+    printf '%s\n' "$allowed_tools" >"$dir/allowed-tools"
+  fi
+  if [[ -n "$disallowed_tools" ]]; then
+    printf '%s\n' "$disallowed_tools" >"$dir/disallowed-tools"
+  fi
 
   cat >"$dir/metadata.json" <<EOF
 {
@@ -276,6 +296,9 @@ write_metadata() {
   "sourceDirty": "$(json_escape "$source_dirty")",
   "sessionName": "$(json_escape "$session_name")",
   "timeoutSeconds": "$(json_escape "$timeout_seconds")",
+  "tools": "$(json_escape "$tools")",
+  "allowedTools": "$(json_escape "$allowed_tools")",
+  "disallowedTools": "$(json_escape "$disallowed_tools")",
   "createdAt": "$(json_escape "$created_at")"
 }
 EOF
@@ -287,6 +310,9 @@ parse_prompt_and_workdir() {
   PERMISSION_MODE="default"
   USE_WORKTREE="false"
   TIMEOUT_SECONDS=""
+  TOOLS=""
+  ALLOWED_TOOLS=""
+  DISALLOWED_TOOLS=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -320,6 +346,21 @@ parse_prompt_and_workdir() {
         [[ $# -ge 2 ]] || fail "--timeout requires a duration"
         TIMEOUT_SECONDS="$(parse_duration_seconds "$2")"
         [[ "$TIMEOUT_SECONDS" -gt 0 ]] || fail "--timeout must be greater than zero"
+        shift 2
+        ;;
+      --tools)
+        [[ $# -ge 2 ]] || fail "--tools requires a tool list"
+        TOOLS="$2"
+        shift 2
+        ;;
+      --allowed-tools|--allowedTools)
+        [[ $# -ge 2 ]] || fail "$1 requires a tool list"
+        ALLOWED_TOOLS="$2"
+        shift 2
+        ;;
+      --disallowed-tools|--disallowedTools)
+        [[ $# -ge 2 ]] || fail "$1 requires a tool list"
+        DISALLOWED_TOOLS="$2"
         shift 2
         ;;
       *)
@@ -365,6 +406,20 @@ run_with_timeout() {
   done
 
   wait "$pid"
+}
+
+build_claude_args() {
+  CLAUDE_ARGS=(--print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE")
+  if [[ -n "$TOOLS" ]]; then
+    CLAUDE_ARGS+=(--tools "$TOOLS")
+  fi
+  if [[ -n "$ALLOWED_TOOLS" ]]; then
+    CLAUDE_ARGS+=(--allowed-tools "$ALLOWED_TOOLS")
+  fi
+  if [[ -n "$DISALLOWED_TOOLS" ]]; then
+    CLAUDE_ARGS+=(--disallowed-tools "$DISALLOWED_TOOLS")
+  fi
+  CLAUDE_ARGS+=(--add-dir "$1")
 }
 
 prepare_execution_workdir() {
@@ -479,13 +534,14 @@ cmd_run() {
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
-  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "" "$TIMEOUT_SECONDS"
+  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "" "$TIMEOUT_SECONDS" "$TOOLS" "$ALLOWED_TOOLS" "$DISALLOWED_TOOLS"
   prompt="$(cat "$PROMPT_FILE")"
+  build_claude_args "$dir"
 
   set +e
   (
     cd "$EXEC_WORKDIR" || exit 1
-    run_with_timeout "$TIMEOUT_SECONDS" "$claude_bin" "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
+    run_with_timeout "$TIMEOUT_SECONDS" "$claude_bin" "$prompt" "${CLAUDE_ARGS[@]}" >"$dir/stdout.log" 2>"$dir/stderr.log"
   )
   exit_code=$?
   set -e
@@ -527,7 +583,10 @@ cmd_start() {
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
-  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session" "$TIMEOUT_SECONDS"
+  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session" "$TIMEOUT_SECONDS" "$TOOLS" "$ALLOWED_TOOLS" "$DISALLOWED_TOOLS"
+  build_claude_args "$dir"
+  local claude_args_shell
+  claude_args_shell="$(shell_join_args "${CLAUDE_ARGS[@]}")"
 
   cat >"$dir/runner.sh" <<EOF
 #!/usr/bin/env bash
@@ -564,7 +623,7 @@ run_with_timeout() {
 
 cd $(shell_quote "$EXEC_WORKDIR") || exit 1
 prompt="\$(cat $(shell_quote "$dir/prompt.md"))"
-run_with_timeout $(shell_quote "$TIMEOUT_SECONDS") $(shell_quote "$claude_bin") "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
+run_with_timeout $(shell_quote "$TIMEOUT_SECONDS") $(shell_quote "$claude_bin") "\$prompt" $claude_args_shell>$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
 code=\$?
 printf '%s\n' "\$code" >$(shell_quote "$dir/exit-code")
 if [[ "\$code" -eq 124 && -n $(shell_quote "$TIMEOUT_SECONDS") ]]; then
@@ -672,7 +731,7 @@ cmd_inspect() {
   local name="$1"
   validate_task_name "$name"
 
-  local dir status mode created workdir source_workdir source_branch source_dirty worktree_enabled worktree_path worktree_branch permission_mode timeout_seconds session report_path
+  local dir status mode created workdir source_workdir source_branch source_dirty worktree_enabled worktree_path worktree_branch permission_mode timeout_seconds tools allowed_tools disallowed_tools session report_path
   dir="$(task_dir "$name")"
   [[ -d "$dir" ]] || fail "unknown task: $name"
 
@@ -688,6 +747,9 @@ cmd_inspect() {
   worktree_branch="$(read_file_or_empty "$dir/worktree-branch")"
   permission_mode="$(read_file_or_empty "$dir/permission-mode")"
   timeout_seconds="$(read_file_or_empty "$dir/timeout-seconds")"
+  tools="$(read_file_or_empty "$dir/tools")"
+  allowed_tools="$(read_file_or_empty "$dir/allowed-tools")"
+  disallowed_tools="$(read_file_or_empty "$dir/disallowed-tools")"
   session="$(read_file_or_empty "$dir/session")"
   report_path="$dir/report.md"
 
@@ -698,6 +760,15 @@ cmd_inspect() {
   printf 'Permission mode: %s\n' "$permission_mode"
   if [[ -n "$timeout_seconds" ]]; then
     printf 'Timeout seconds: %s\n' "$timeout_seconds"
+  fi
+  if [[ -n "$tools" ]]; then
+    printf 'Tools: %s\n' "$tools"
+  fi
+  if [[ -n "$allowed_tools" ]]; then
+    printf 'Allowed tools: %s\n' "$allowed_tools"
+  fi
+  if [[ -n "$disallowed_tools" ]]; then
+    printf 'Disallowed tools: %s\n' "$disallowed_tools"
   fi
   if [[ -f "$dir/timed-out" ]]; then
     printf 'Timed out: %s\n' "$(read_file_or_empty "$dir/timed-out")"

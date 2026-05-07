@@ -37,7 +37,7 @@ assert_file() {
 assert_contains() {
   local file="$1"
   local expected="$2"
-  grep -F "$expected" "$file" >/dev/null || fail "expected $file to contain: $expected"
+  grep -F -- "$expected" "$file" >/dev/null || fail "expected $file to contain: $expected"
 }
 
 assert_output_contains() {
@@ -77,6 +77,14 @@ if [[ "$prompt" == *"REPORT:"* ]]; then
   report_path="${report_path%% --*}"
   mkdir -p "$(dirname "$report_path")"
   printf 'Fake Claude report.\n' >"$report_path"
+fi
+
+if [[ "$prompt" == *"ARGS_REPORT:"* ]]; then
+  args_report_path="${prompt##*ARGS_REPORT:}"
+  args_report_path="${args_report_path%%$'\n'*}"
+  args_report_path="${args_report_path%% --*}"
+  mkdir -p "$(dirname "$args_report_path")"
+  printf '%s\n' "$prompt" >"$args_report_path"
 fi
 
 if [[ "$prompt" == *"FAIL_TASK"* ]]; then
@@ -229,6 +237,35 @@ test_run_timeout_records_failed_task() {
   assert_output_contains "$output" "Timeout seconds: 1"
   assert_output_contains "$output" "Timed out: timeout after 1 seconds"
   pass "run --timeout terminates and records timed-out tasks"
+}
+
+test_run_passes_claude_tool_restrictions() {
+  local repo prompt args_report output
+  repo="$TMP_DIR/fixture-tools"
+  prompt="$TMP_DIR/tools.md"
+  args_report="$TMP_DIR/tools-args.txt"
+  make_fixture_repo "$repo"
+  printf 'ARGS_REPORT:%s\n' "$args_report" >"$prompt"
+
+  "$BIN" run tools-task \
+    --prompt "$prompt" \
+    --workdir "$repo" \
+    --tools "Read,Write,Edit" \
+    --allowed-tools "Read,Write,Edit,LS,Glob,Grep" \
+    --disallowed-tools "Bash" >/dev/null
+
+  assert_contains "$args_report" "--tools Read,Write,Edit"
+  assert_contains "$args_report" "--allowed-tools Read,Write,Edit,LS,Glob,Grep"
+  assert_contains "$args_report" "--disallowed-tools Bash"
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/tools-task/metadata.json" '"tools": "Read,Write,Edit"'
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/tools-task/metadata.json" '"allowedTools": "Read,Write,Edit,LS,Glob,Grep"'
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/tools-task/metadata.json" '"disallowedTools": "Bash"'
+
+  output="$("$BIN" inspect tools-task)"
+  assert_output_contains "$output" "Tools: Read,Write,Edit"
+  assert_output_contains "$output" "Allowed tools: Read,Write,Edit,LS,Glob,Grep"
+  assert_output_contains "$output" "Disallowed tools: Bash"
+  pass "run passes Claude tool restrictions"
 }
 
 test_run_with_worktree_isolates_source_repo() {
@@ -423,6 +460,7 @@ test_diff_and_inspect_include_untracked_files
 test_cleanup_removes_task_only
 test_run_failure
 test_run_timeout_records_failed_task
+test_run_passes_claude_tool_restrictions
 test_run_with_worktree_isolates_source_repo
 test_cleanup_with_worktree_and_branch
 test_integrate_copies_approved_paths_from_worktree

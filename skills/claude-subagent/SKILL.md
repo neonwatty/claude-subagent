@@ -36,6 +36,12 @@ claude-subagent run <task-name> --prompt <prompt-file> --workdir <path> --worktr
 
 Use `--timeout <duration>` for bounded work, especially exploratory or creative tasks. Durations accept `s`, `m`, or `h`, for example `--timeout 10m`.
 
+Use Claude tool restrictions for bounded tasks:
+
+```bash
+claude-subagent run <task-name> --prompt <prompt-file> --workdir <path> --worktree --permission-mode acceptEdits --timeout 10m --allowed-tools "Read,Write,Edit,LS,Glob,Grep" --disallowed-tools "Bash"
+```
+
 Use `start` instead of `run` for longer work:
 
 ```bash
@@ -65,6 +71,7 @@ claude-subagent integrate <task-name> --path <relative-path>
 - Prefer isolated git worktrees for repo-editing tasks.
 - Keep the handoff prompt precise and bounded.
 - Use timeouts for tasks likely to sprawl; a timed-out task exits `124` and should be reviewed before retrying.
+- Prefer `--allowed-tools` / `--disallowed-tools` for tasks that do not need the full Claude Code tool surface.
 - Do not give Claude permission to edit unrelated files.
 - Do not auto-merge, auto-commit, or auto-push Claude's changes unless the user explicitly asks.
 - Treat Claude output as untrusted until Codex reviews the transcript, report, and diff.

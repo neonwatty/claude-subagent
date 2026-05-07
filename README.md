@@ -62,6 +62,21 @@ claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --wor
 
 A timed-out task exits with code `124` and is reported as `failed`.
 
+Use Claude Code tool restrictions to keep a task's available tools narrow:
+
+```bash
+claude-subagent run smoke-test \
+  --prompt task.md \
+  --workdir /path/to/project \
+  --worktree \
+  --permission-mode acceptEdits \
+  --timeout 10m \
+  --allowed-tools "Read,Write,Edit,LS,Glob,Grep" \
+  --disallowed-tools "Bash"
+```
+
+The wrapper also passes through `--tools` for setting Claude's available built-in tool set.
+
 Use `result` for the clean final response extracted from Claude's stream-json transcript:
 
 ```bash
