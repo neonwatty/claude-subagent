@@ -11,7 +11,13 @@ Use this skill only when the user explicitly asks to offload, delegate, spin up 
 
 1. Confirm the task boundary from the conversation.
 2. Choose a task name with only letters, numbers, dots, underscores, or hyphens.
-3. Create a handoff prompt file that includes:
+3. Create a handoff prompt file. For HyperFrames work, prefer:
+
+```bash
+claude-subagent prompt hyperframes --task-name <task-name> --workdir <path> --output-path <relative-path> --duration 15s --audience <audience>
+```
+
+For other work, create a handoff prompt file that includes:
    - objective
    - working directory
    - allowed edit paths

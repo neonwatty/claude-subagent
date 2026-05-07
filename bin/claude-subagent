@@ -9,6 +9,7 @@ usage() {
   cat <<'EOF'
 Usage:
   claude-subagent init
+  claude-subagent prompt hyperframes --task-name <task-name> --workdir <path> --output-path <relative-path> [--duration <duration>] [--audience <audience>] [--objective <text>] [--notes <text>] [--force]
   claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>] [--tools <tools>] [--allowed-tools <tools>] [--disallowed-tools <tools>]
   claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>] [--tools <tools>] [--allowed-tools <tools>] [--disallowed-tools <tools>]
   claude-subagent status <task-name>
@@ -517,6 +518,169 @@ cmd_init() {
   printf 'initialized %s\n' "$BASE_DIR"
 }
 
+cmd_prompt_hyperframes() {
+  local task_name=""
+  local workdir=""
+  local output_path=""
+  local duration="15s"
+  local audience="creators"
+  local objective="Create or iterate a self-contained HyperFrames HTML concept for a vertical marketing video."
+  local notes=""
+  local force="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task-name)
+        [[ $# -ge 2 ]] || fail "--task-name requires a value"
+        task_name="$2"
+        validate_task_name "$task_name"
+        shift 2
+        ;;
+      --workdir)
+        [[ $# -ge 2 ]] || fail "--workdir requires a path"
+        workdir="$2"
+        shift 2
+        ;;
+      --output-path)
+        [[ $# -ge 2 ]] || fail "--output-path requires a relative path"
+        output_path="$2"
+        validate_relative_path "$output_path"
+        shift 2
+        ;;
+      --duration)
+        [[ $# -ge 2 ]] || fail "--duration requires a value"
+        duration="$2"
+        shift 2
+        ;;
+      --audience)
+        [[ $# -ge 2 ]] || fail "--audience requires a value"
+        audience="$2"
+        shift 2
+        ;;
+      --objective)
+        [[ $# -ge 2 ]] || fail "--objective requires text"
+        objective="$2"
+        shift 2
+        ;;
+      --notes)
+        [[ $# -ge 2 ]] || fail "--notes requires text"
+        notes="$2"
+        shift 2
+        ;;
+      --force)
+        force="true"
+        shift
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$task_name" ]] || fail "--task-name is required"
+  [[ -n "$workdir" ]] || fail "--workdir is required"
+  [[ -d "$workdir" ]] || fail "workdir not found: $workdir"
+  [[ -n "$output_path" ]] || fail "--output-path is required"
+
+  workdir="$(cd "$workdir" && pwd)"
+  ensure_base_dirs
+
+  local dir prompt_file report_path
+  dir="$(task_dir "$task_name")"
+  prompt_file="$dir/prompt.md"
+  report_path="$dir/report.md"
+
+  if [[ -e "$prompt_file" && "$force" != "true" ]]; then
+    fail "prompt already exists: $prompt_file"
+  fi
+
+  mkdir -p "$dir"
+  cat >"$prompt_file" <<EOF
+# Claude Subagent Handoff: HyperFrames
+
+## Objective
+
+$objective
+
+## Working Directory
+
+$workdir
+
+## Audience
+
+$audience
+
+## Duration
+
+$duration
+
+## Allowed Edit Paths
+
+- $output_path
+
+## Forbidden Edit Paths
+
+- Do not edit files outside $output_path.
+- Do not commit, push, install packages, or change dependency manifests.
+- Do not edit generated task state under $BASE_DIR except for the completion report path below.
+
+## Deliverables
+
+- A self-contained HTML HyperFrames concept under $output_path.
+- A short README under $output_path describing the concept, preview steps, timing, and caveats.
+- A completion report at $report_path.
+
+## Creative Constraints
+
+- Build a usable HTML-to-video concept, not a landing page.
+- Prefer fixed 1080x1920 vertical-video staging unless the existing project clearly uses a different HyperFrames convention.
+- Keep assets local or code-native. Do not fetch network assets.
+- Keep copy concise and production-reviewable.
+- If existing brand, content, or HyperFrames examples are present in the repo, inspect only the minimum files needed to match those patterns.
+- Avoid competitor references unless explicitly present in approved source material.
+
+## Notes
+
+${notes:-None.}
+
+## Completion Report
+
+Write $report_path with:
+
+- files created or changed
+- commands run
+- checks performed
+- known caveats
+- recommended next iteration
+
+Stop after the scoped task is complete.
+EOF
+
+  printf '%s\n' "$workdir" >"$dir/prompt-workdir"
+  printf '%s\n' "$output_path" >"$dir/prompt-output-path"
+  printf '%s\n' "hyperframes" >"$dir/prompt-kind"
+
+  printf 'prompt %s\n' "$prompt_file"
+  printf 'recommended run:\n'
+  printf 'claude-subagent run %s --prompt %s --workdir %s --worktree --permission-mode acceptEdits --timeout 10m --allowed-tools %s --disallowed-tools %s\n' \
+    "$(shell_quote "$task_name")" \
+    "$(shell_quote "$prompt_file")" \
+    "$(shell_quote "$workdir")" \
+    "$(shell_quote "Read,Write,Edit,LS,Glob,Grep")" \
+    "$(shell_quote "Bash")"
+}
+
+cmd_prompt() {
+  [[ $# -ge 1 ]] || fail "prompt requires a template name"
+  local template="$1"
+  shift
+
+  case "$template" in
+    hyperframes) cmd_prompt_hyperframes "$@" ;;
+    *) fail "unknown prompt template: $template" ;;
+  esac
+}
+
 cmd_run() {
   [[ $# -ge 1 ]] || fail "run requires a task name"
   local name="$1"
@@ -1008,6 +1172,7 @@ main() {
 
   case "$command" in
     init) cmd_init "$@" ;;
+    prompt) cmd_prompt "$@" ;;
     run) cmd_run "$@" ;;
     start) cmd_start "$@" ;;
     status) cmd_status "$@" ;;

@@ -113,6 +113,56 @@ test_init_and_list() {
   pass "init creates storage and list handles empty task set"
 }
 
+test_prompt_hyperframes_generates_handoff() {
+  local repo output prompt_file
+  repo="$TMP_DIR/fixture-prompt"
+  make_fixture_repo "$repo"
+
+  output="$("$BIN" prompt hyperframes \
+    --task-name prompt-task \
+    --workdir "$repo" \
+    --output-path creative/hyperframes-prompt \
+    --duration 12s \
+    --audience "podcast creators" \
+    --objective "Create a tighter creator ad concept." \
+    --notes "Use the amber brand accent.")"
+
+  prompt_file="$CLAUDE_SUBAGENT_HOME/tasks/prompt-task/prompt.md"
+  assert_output_contains "$output" "prompt $prompt_file"
+  assert_output_contains "$output" "recommended run:"
+  assert_output_contains "$output" "--timeout 10m"
+  assert_output_contains "$output" "--allowed-tools 'Read,Write,Edit,LS,Glob,Grep'"
+  assert_file "$prompt_file"
+  assert_contains "$prompt_file" "# Claude Subagent Handoff: HyperFrames"
+  assert_contains "$prompt_file" "Create a tighter creator ad concept."
+  assert_contains "$prompt_file" "podcast creators"
+  assert_contains "$prompt_file" "12s"
+  assert_contains "$prompt_file" "- creative/hyperframes-prompt"
+  assert_contains "$prompt_file" "Use the amber brand accent."
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/prompt-task/prompt-kind" "hyperframes"
+  pass "prompt hyperframes generates scoped handoff"
+}
+
+test_prompt_hyperframes_refuses_overwrite_without_force() {
+  local repo output
+  repo="$TMP_DIR/fixture-prompt-overwrite"
+  make_fixture_repo "$repo"
+
+  "$BIN" prompt hyperframes --task-name prompt-overwrite --workdir "$repo" --output-path creative/one >/dev/null
+
+  set +e
+  output="$("$BIN" prompt hyperframes --task-name prompt-overwrite --workdir "$repo" --output-path creative/two 2>&1)"
+  local code=$?
+  set -e
+
+  [[ "$code" -ne 0 ]] || fail "prompt should refuse overwrite without force"
+  assert_output_contains "$output" "prompt already exists"
+
+  "$BIN" prompt hyperframes --task-name prompt-overwrite --workdir "$repo" --output-path creative/two --force >/dev/null
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/prompt-overwrite/prompt.md" "- creative/two"
+  pass "prompt hyperframes refuses overwrite without force"
+}
+
 test_run_success_logs_metadata_and_diff() {
   local repo prompt report output
   repo="$TMP_DIR/fixture-success"
@@ -454,6 +504,8 @@ test_start_with_worktree_creates_isolated_session() {
 
 make_fake_claude
 test_init_and_list
+test_prompt_hyperframes_generates_handoff
+test_prompt_hyperframes_refuses_overwrite_without_force
 test_run_success_logs_metadata_and_diff
 test_inspect_summarizes_task
 test_diff_and_inspect_include_untracked_files

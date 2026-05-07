@@ -40,6 +40,19 @@ For a bounded one-shot task:
 claude-subagent run smoke-test --prompt task.md --workdir /path/to/project
 ```
 
+For HyperFrames work, generate a scoped handoff prompt:
+
+```bash
+claude-subagent prompt hyperframes \
+  --task-name bleep-creator-v2 \
+  --workdir /path/to/project \
+  --output-path creative/hyperframes-pilot \
+  --duration 15s \
+  --audience creators
+```
+
+The command writes `~/.claude-subagents/tasks/<task-name>/prompt.md` and prints a recommended `run` command.
+
 For non-interactive edit tasks, opt in to Claude Code's edit-accepting permission mode:
 
 ```bash
