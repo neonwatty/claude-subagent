@@ -83,7 +83,7 @@ claude-subagent integrate <task-name> --path <relative-path>
 - Treat Claude output as untrusted until Codex reviews the transcript, report, and diff.
 - Use `diff` to review tracked, staged, and untracked generated files; small new text files are printed inline.
 - Use `integrate` only for user-approved relative paths. Do not integrate the whole worktree by default.
-- Use `cleanup <task-name>` only after review. Add `--worktree --branch --force` only when the user wants to discard the isolated worktree and generated changes.
+- Use `cleanup <task-name>` only after review. Add `--worktree --branch --force` only when the user wants to discard the isolated worktree and generated changes. Add `--keep-task` after integration when preserving the report and audit trail is useful.
 - If Claude fails or produces ambiguous results, summarize the failure and ask for direction before retrying with broader permissions.
 
 ## Storage

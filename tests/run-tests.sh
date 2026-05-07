@@ -397,6 +397,31 @@ test_cleanup_with_worktree_and_branch() {
   pass "cleanup --worktree --branch removes task, worktree, and branch"
 }
 
+test_cleanup_keep_task_removes_worktree_and_preserves_audit() {
+  local repo prompt task_dir worktree_path branch output
+  repo="$TMP_DIR/fixture-cleanup-keep-task"
+  prompt="$TMP_DIR/cleanup-keep-task.md"
+  make_fixture_repo "$repo"
+  printf 'APPEND_README\n' >"$prompt"
+
+  "$BIN" run cleanup-keep-task --prompt "$prompt" --workdir "$repo" --worktree >/dev/null
+  task_dir="$CLAUDE_SUBAGENT_HOME/tasks/cleanup-keep-task"
+  worktree_path="$CLAUDE_SUBAGENT_HOME/worktrees/cleanup-keep-task"
+  branch="claude-subagent/cleanup-keep-task"
+  printf 'audit marker\n' >"$task_dir/integrated-paths.log"
+
+  output="$("$BIN" cleanup cleanup-keep-task --worktree --branch --force --keep-task)"
+  assert_output_contains "$output" "removed worktree $worktree_path"
+  assert_output_contains "$output" "deleted branch $branch"
+  assert_output_contains "$output" "kept task cleanup-keep-task"
+  [[ -d "$task_dir" ]] || fail "task directory should be preserved"
+  assert_file "$task_dir/cleaned-at"
+  assert_contains "$task_dir/integrated-paths.log" "audit marker"
+  [[ ! -e "$worktree_path" ]] || fail "worktree should be removed"
+  ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" || fail "worktree branch should be deleted"
+  pass "cleanup --keep-task preserves task audit while removing worktree and branch"
+}
+
 test_integrate_copies_approved_paths_from_worktree() {
   local repo prompt output task_dir
   repo="$TMP_DIR/fixture-integrate"
@@ -533,6 +558,7 @@ test_run_timeout_records_failed_task
 test_run_passes_claude_tool_restrictions
 test_run_with_worktree_isolates_source_repo
 test_cleanup_with_worktree_and_branch
+test_cleanup_keep_task_removes_worktree_and_preserves_audit
 test_integrate_copies_approved_paths_from_worktree
 test_integrate_refuses_dirty_source_path_without_force
 test_unknown_and_invalid_tasks

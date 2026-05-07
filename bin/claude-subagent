@@ -19,7 +19,7 @@ Usage:
   claude-subagent diff <task-name>
   claude-subagent integrate <task-name> --path <relative-path> [--path <relative-path> ...] [--force]
   claude-subagent stop <task-name>
-  claude-subagent cleanup <task-name> [--worktree] [--branch] [--force]
+  claude-subagent cleanup <task-name> [--worktree] [--branch] [--force] [--keep-task]
   claude-subagent list
 
 Environment:
@@ -1066,6 +1066,7 @@ cmd_cleanup() {
   local remove_worktree="false"
   local remove_branch="false"
   local force_remove="false"
+  local keep_task="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --worktree)
@@ -1078,6 +1079,10 @@ cmd_cleanup() {
         ;;
       --force)
         force_remove="true"
+        shift
+        ;;
+      --keep-task)
+        keep_task="true"
         shift
         ;;
       *)
@@ -1123,8 +1128,13 @@ cmd_cleanup() {
     printf 'deleted branch %s\n' "$worktree_branch"
   fi
 
-  rm -rf "$dir"
-  printf 'removed task %s\n' "$name"
+  if [[ "$keep_task" == "true" ]]; then
+    printf '%s\n' "$(now_utc)" >"$dir/cleaned-at"
+    printf 'kept task %s\n' "$name"
+  else
+    rm -rf "$dir"
+    printf 'removed task %s\n' "$name"
+  fi
 }
 
 cmd_stop() {

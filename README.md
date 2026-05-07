@@ -130,6 +130,12 @@ For isolated worktree tasks, explicitly opt in to deleting the worktree and bran
 claude-subagent cleanup smoke-test --worktree --branch --force
 ```
 
+After integrating a task, preserve the report and audit trail while removing only the generated worktree and branch:
+
+```bash
+claude-subagent cleanup smoke-test --worktree --branch --force --keep-task
+```
+
 ## Tests
 
 Run the deterministic fake-agent test suite:
