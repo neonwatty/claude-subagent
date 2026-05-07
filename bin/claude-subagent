@@ -9,8 +9,8 @@ usage() {
   cat <<'EOF'
 Usage:
   claude-subagent init
-  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree]
-  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree]
+  claude-subagent run <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>]
+  claude-subagent start <task-name> --prompt <file> --workdir <path> [--permission-mode <mode>] [--worktree] [--timeout <duration>]
   claude-subagent status <task-name>
   claude-subagent logs <task-name> [--tail <lines>]
   claude-subagent result <task-name>
@@ -50,6 +50,21 @@ validate_relative_path() {
   [[ "$path" != /* ]] || fail "path must be relative: $path"
   [[ "$path" != "." ]] || fail "path must not be repository root"
   [[ "$path" != *"/../"* && "$path" != "../"* && "$path" != *"/.." ]] || fail "path must not contain ..: $path"
+}
+
+parse_duration_seconds() {
+  local value="$1"
+  if [[ "$value" =~ ^([0-9]+)([smh]?)$ ]]; then
+    local amount="${BASH_REMATCH[1]}"
+    local unit="${BASH_REMATCH[2]}"
+    case "$unit" in
+      ""|s) printf '%s\n' "$amount" ;;
+      m) printf '%s\n' "$((amount * 60))" ;;
+      h) printf '%s\n' "$((amount * 3600))" ;;
+    esac
+  else
+    fail "invalid timeout duration: $value"
+  fi
 }
 
 task_dir() {
@@ -219,6 +234,7 @@ write_metadata() {
   local source_branch="${11}"
   local source_dirty="${12}"
   local session_name="${13:-}"
+  local timeout_seconds="${14:-}"
   local created_at
   created_at="$(now_utc)"
 
@@ -241,6 +257,9 @@ write_metadata() {
   if [[ -n "$session_name" ]]; then
     printf '%s\n' "$session_name" >"$dir/session"
   fi
+  if [[ -n "$timeout_seconds" ]]; then
+    printf '%s\n' "$timeout_seconds" >"$dir/timeout-seconds"
+  fi
 
   cat >"$dir/metadata.json" <<EOF
 {
@@ -256,6 +275,7 @@ write_metadata() {
   "sourceBranch": "$(json_escape "$source_branch")",
   "sourceDirty": "$(json_escape "$source_dirty")",
   "sessionName": "$(json_escape "$session_name")",
+  "timeoutSeconds": "$(json_escape "$timeout_seconds")",
   "createdAt": "$(json_escape "$created_at")"
 }
 EOF
@@ -266,6 +286,7 @@ parse_prompt_and_workdir() {
   WORKDIR=""
   PERMISSION_MODE="default"
   USE_WORKTREE="false"
+  TIMEOUT_SECONDS=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -295,6 +316,12 @@ parse_prompt_and_workdir() {
         USE_WORKTREE="true"
         shift
         ;;
+      --timeout)
+        [[ $# -ge 2 ]] || fail "--timeout requires a duration"
+        TIMEOUT_SECONDS="$(parse_duration_seconds "$2")"
+        [[ "$TIMEOUT_SECONDS" -gt 0 ]] || fail "--timeout must be greater than zero"
+        shift 2
+        ;;
       *)
         fail "unknown option: $1"
         ;;
@@ -308,6 +335,36 @@ parse_prompt_and_workdir() {
 
   PROMPT_FILE="$(cd "$(dirname "$PROMPT_FILE")" && pwd)/$(basename "$PROMPT_FILE")"
   WORKDIR="$(cd "$WORKDIR" && pwd)"
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+
+  if [[ -z "$timeout_seconds" ]]; then
+    "$@"
+    return $?
+  fi
+
+  "$@" &
+  local pid=$!
+  local elapsed=0
+
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+      sleep 2
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill -KILL "$pid" >/dev/null 2>&1 || true
+      fi
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$pid"
 }
 
 prepare_execution_workdir() {
@@ -422,18 +479,22 @@ cmd_run() {
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
-  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY"
+  write_metadata "$dir" "$name" "run" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "" "$TIMEOUT_SECONDS"
   prompt="$(cat "$PROMPT_FILE")"
 
   set +e
   (
     cd "$EXEC_WORKDIR" || exit 1
-    "$claude_bin" "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
+    run_with_timeout "$TIMEOUT_SECONDS" "$claude_bin" "$prompt" --print --verbose --output-format stream-json --permission-mode "$PERMISSION_MODE" --add-dir "$dir" >"$dir/stdout.log" 2>"$dir/stderr.log"
   )
   exit_code=$?
   set -e
 
   printf '%s\n' "$exit_code" >"$dir/exit-code"
+  if [[ "$exit_code" -eq 124 && -n "$TIMEOUT_SECONDS" ]]; then
+    printf 'timeout after %s seconds\n' "$TIMEOUT_SECONDS" >"$dir/timed-out"
+    printf 'claude-subagent: timeout after %s seconds\n' "$TIMEOUT_SECONDS" >>"$dir/stderr.log"
+  fi
   extract_result "$dir"
   cat "$dir/stdout.log"
   if [[ "$exit_code" -ne 0 ]]; then
@@ -466,16 +527,50 @@ cmd_start() {
   mkdir -p "$dir"
   cp "$PROMPT_FILE" "$dir/prompt.md"
   prepare_execution_workdir "$name" "$dir"
-  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session"
+  write_metadata "$dir" "$name" "start" "$PROMPT_FILE" "$EXEC_WORKDIR" "$PERMISSION_MODE" "$SOURCE_WORKDIR" "$USE_WORKTREE" "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$SOURCE_BRANCH" "$SOURCE_DIRTY" "$session" "$TIMEOUT_SECONDS"
 
   cat >"$dir/runner.sh" <<EOF
 #!/usr/bin/env bash
 set +e
+run_with_timeout() {
+  local timeout_seconds="\$1"
+  shift
+
+  if [[ -z "\$timeout_seconds" ]]; then
+    "\$@"
+    return \$?
+  fi
+
+  "\$@" &
+  local pid=\$!
+  local elapsed=0
+
+  while kill -0 "\$pid" >/dev/null 2>&1; do
+    if [[ "\$elapsed" -ge "\$timeout_seconds" ]]; then
+      kill -TERM "\$pid" >/dev/null 2>&1 || true
+      sleep 2
+      if kill -0 "\$pid" >/dev/null 2>&1; then
+        kill -KILL "\$pid" >/dev/null 2>&1 || true
+      fi
+      wait "\$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    elapsed=\$((elapsed + 1))
+  done
+
+  wait "\$pid"
+}
+
 cd $(shell_quote "$EXEC_WORKDIR") || exit 1
 prompt="\$(cat $(shell_quote "$dir/prompt.md"))"
-$(shell_quote "$claude_bin") "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
+run_with_timeout $(shell_quote "$TIMEOUT_SECONDS") $(shell_quote "$claude_bin") "\$prompt" --print --verbose --output-format stream-json --permission-mode $(shell_quote "$PERMISSION_MODE") --add-dir $(shell_quote "$dir") >$(shell_quote "$dir/stdout.log") 2>$(shell_quote "$dir/stderr.log")
 code=\$?
 printf '%s\n' "\$code" >$(shell_quote "$dir/exit-code")
+if [[ "\$code" -eq 124 && -n $(shell_quote "$TIMEOUT_SECONDS") ]]; then
+  printf 'timeout after %s seconds\n' $(shell_quote "$TIMEOUT_SECONDS") >$(shell_quote "$dir/timed-out")
+  printf 'claude-subagent: timeout after %s seconds\n' $(shell_quote "$TIMEOUT_SECONDS") >>$(shell_quote "$dir/stderr.log")
+fi
 if command -v ruby >/dev/null 2>&1; then
   ruby -rjson -e '
     texts = []
@@ -577,7 +672,7 @@ cmd_inspect() {
   local name="$1"
   validate_task_name "$name"
 
-  local dir status mode created workdir source_workdir source_branch source_dirty worktree_enabled worktree_path worktree_branch permission_mode session report_path
+  local dir status mode created workdir source_workdir source_branch source_dirty worktree_enabled worktree_path worktree_branch permission_mode timeout_seconds session report_path
   dir="$(task_dir "$name")"
   [[ -d "$dir" ]] || fail "unknown task: $name"
 
@@ -592,6 +687,7 @@ cmd_inspect() {
   worktree_path="$(read_file_or_empty "$dir/worktree-path")"
   worktree_branch="$(read_file_or_empty "$dir/worktree-branch")"
   permission_mode="$(read_file_or_empty "$dir/permission-mode")"
+  timeout_seconds="$(read_file_or_empty "$dir/timeout-seconds")"
   session="$(read_file_or_empty "$dir/session")"
   report_path="$dir/report.md"
 
@@ -600,6 +696,12 @@ cmd_inspect() {
   printf 'Mode: %s\n' "$mode"
   printf 'Created: %s\n' "$created"
   printf 'Permission mode: %s\n' "$permission_mode"
+  if [[ -n "$timeout_seconds" ]]; then
+    printf 'Timeout seconds: %s\n' "$timeout_seconds"
+  fi
+  if [[ -f "$dir/timed-out" ]]; then
+    printf 'Timed out: %s\n' "$(read_file_or_empty "$dir/timed-out")"
+  fi
   if [[ -n "$session" ]]; then
     printf 'Session: %s\n' "$session"
   fi

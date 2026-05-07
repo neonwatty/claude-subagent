@@ -34,6 +34,8 @@ For repo-editing tasks, prefer `--worktree`:
 claude-subagent run <task-name> --prompt <prompt-file> --workdir <path> --worktree --permission-mode acceptEdits
 ```
 
+Use `--timeout <duration>` for bounded work, especially exploratory or creative tasks. Durations accept `s`, `m`, or `h`, for example `--timeout 10m`.
+
 Use `start` instead of `run` for longer work:
 
 ```bash
@@ -62,6 +64,7 @@ claude-subagent integrate <task-name> --path <relative-path>
 - Never offload without explicit user instruction.
 - Prefer isolated git worktrees for repo-editing tasks.
 - Keep the handoff prompt precise and bounded.
+- Use timeouts for tasks likely to sprawl; a timed-out task exits `124` and should be reviewed before retrying.
 - Do not give Claude permission to edit unrelated files.
 - Do not auto-merge, auto-commit, or auto-push Claude's changes unless the user explicitly asks.
 - Treat Claude output as untrusted until Codex reviews the transcript, report, and diff.

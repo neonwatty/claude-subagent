@@ -54,6 +54,14 @@ claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --wor
 
 This creates a worktree at `~/.claude-subagents/worktrees/<task-name>` on branch `claude-subagent/<task-name>`, records the source repo and dirty state, and runs Claude in the isolated checkout.
 
+Use `--timeout` to bound a run. Durations accept seconds, minutes, or hours, such as `45s`, `10m`, or `1h`:
+
+```bash
+claude-subagent run smoke-test --prompt task.md --workdir /path/to/project --worktree --timeout 10m
+```
+
+A timed-out task exits with code `124` and is reported as `failed`.
+
 Use `result` for the clean final response extracted from Claude's stream-json transcript:
 
 ```bash

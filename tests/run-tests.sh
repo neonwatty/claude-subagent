@@ -206,6 +206,31 @@ test_run_failure() {
   pass "run records failed Claude exit codes"
 }
 
+test_run_timeout_records_failed_task() {
+  local repo prompt status output
+  repo="$TMP_DIR/fixture-timeout"
+  prompt="$TMP_DIR/timeout.md"
+  make_fixture_repo "$repo"
+  printf 'SLEEP_TASK\n' >"$prompt"
+
+  set +e
+  "$BIN" run timeout-task --prompt "$prompt" --workdir "$repo" --timeout 1s >/tmp/claude-subagent-test-timeout.out 2>/tmp/claude-subagent-test-timeout.err
+  local code=$?
+  set -e
+
+  [[ "$code" -eq 124 ]] || fail "expected timeout exit 124, got $code"
+  status="$("$BIN" status timeout-task)"
+  [[ "$status" == "failed" ]] || fail "expected timeout task to fail, got $status"
+  [[ "$(cat "$CLAUDE_SUBAGENT_HOME/tasks/timeout-task/exit-code")" == "124" ]] || fail "timeout exit code was not recorded"
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/timeout-task/timed-out" "timeout after 1 seconds"
+  assert_contains "$CLAUDE_SUBAGENT_HOME/tasks/timeout-task/metadata.json" '"timeoutSeconds": "1"'
+
+  output="$("$BIN" inspect timeout-task)"
+  assert_output_contains "$output" "Timeout seconds: 1"
+  assert_output_contains "$output" "Timed out: timeout after 1 seconds"
+  pass "run --timeout terminates and records timed-out tasks"
+}
+
 test_run_with_worktree_isolates_source_repo() {
   local repo prompt report output task_dir worktree_path source_head
   repo="$TMP_DIR/fixture-worktree"
@@ -397,6 +422,7 @@ test_inspect_summarizes_task
 test_diff_and_inspect_include_untracked_files
 test_cleanup_removes_task_only
 test_run_failure
+test_run_timeout_records_failed_task
 test_run_with_worktree_isolates_source_repo
 test_cleanup_with_worktree_and_branch
 test_integrate_copies_approved_paths_from_worktree
